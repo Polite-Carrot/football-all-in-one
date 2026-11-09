@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "667653030087",
+    "project_id": "football-all-in-one-8320a",
+    "storage_bucket": "football-all-in-one-8320a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:667653030087:android:c33eb3bf70df98c2e57ee2",
+        "android_client_info": {
+          "package_name": "com.politecarrot.footballallinone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAttYF0qkur_YWWEIjozG7Qab3esalh2To"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

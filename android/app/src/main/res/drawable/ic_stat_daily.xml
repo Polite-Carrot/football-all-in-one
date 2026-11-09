@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for the daily reminder. Android draws small notification
+     icons as a white silhouette, so this is a single-colour football; a full
+     colour icon would show as a grey square. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- ball outline -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M3,12a9,9 0,1 0,18 0a9,9 0,1 0,-18 0z" />
+    <!-- centre patch -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,8.4L15.42,10.89L14.12,14.91L9.88,14.91L8.58,10.89z" />
+    <!-- seams -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M12,8.4L12,3.8M15.42,10.89L19.42,9.59M14.12,14.91L16.58,18.31M9.88,14.91L7.42,18.31M8.58,10.89L4.58,9.59" />
+</vector>
