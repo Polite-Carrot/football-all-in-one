@@ -49,6 +49,15 @@
         <div class="today__streak"><b id="today-streak-num">0</b><span>day<br>streak</span></div>
       </div>
 
+      <button id="home-versus" class="versus-cta" type="button">
+        <span class="versus-cta__badge" aria-hidden="true"><i></i>VS<i></i></span>
+        <span class="versus-cta__body">
+          <b>Versus</b>
+          <span>Pass &amp; play. One phone, you v your mate.</span>
+        </span>
+        <span class="game__status is-new">Play</span>
+      </button>
+
       <ul class="games" id="game-list"></ul>
 
       <p id="save-warning" class="save-warning" role="status" hidden></p>
@@ -104,6 +113,36 @@
       <button id="result-share" class="btn btn--ghost" type="button">Share</button>
       <button id="result-again" class="btn btn--ghost" type="button">Play again</button>
       <button id="result-next" class="btn btn--primary" type="button">Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────── versus: pass the phone ─────────────── -->
+<div id="handoff" class="overlay handoff" hidden>
+  <div class="handoff__card" role="dialog" aria-modal="true" aria-labelledby="handoff-name">
+    <span class="handoff__kicker" id="handoff-kicker"></span>
+    <div class="handoff__tally vs-tally" id="handoff-tally"></div>
+    <p class="handoff__pass" id="handoff-pass"></p>
+    <h2 class="handoff__name" id="handoff-name"></h2>
+    <p class="handoff__note" id="handoff-note"></p>
+    <button id="handoff-go" class="btn btn--primary btn--wide" type="button"></button>
+    <button id="handoff-quit" class="btn btn--quiet" type="button">End match</button>
+  </div>
+</div>
+
+<!-- ─────────────── versus: round result ─────────────── -->
+<div id="vs-result" class="overlay overlay--sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="vs-headline">
+    <div class="sheet__grab" aria-hidden="true"></div>
+    <span class="sheet__kicker" id="vs-kicker"></span>
+    <h2 class="sheet__headline" id="vs-headline"></h2>
+    <div class="vs-board" id="vs-board"></div>
+    <p class="sheet__sub" id="vs-sub"></p>
+    <div class="sheet__detail" id="vs-detail"></div>
+    <div class="sheet__actions">
+      <button id="vs-share" class="btn btn--ghost" type="button">Share</button>
+      <button id="vs-alt" class="btn btn--ghost" type="button">End match</button>
+      <button id="vs-next" class="btn btn--primary" type="button">Next round</button>
     </div>
   </div>
 </div>
@@ -278,6 +317,7 @@
 <script src="js/data/ladders.js"></script>
 <script src="js/data/seasons.js"></script>
 <script src="js/footy.js"></script>
+<script src="js/datafeed.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/sfx.js"></script>
 <script src="js/games.js"></script>

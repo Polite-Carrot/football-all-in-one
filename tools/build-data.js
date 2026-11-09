@@ -500,7 +500,7 @@ async function main() {
   };
   const db = {
     v: 2,
-    built: new Date().toISOString().slice(0, 10),
+    built: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
     names: players.map(p => p.name.replace(/\|/g, '/')).join('|'),
     birth: players.map(p => b36(p.birth ? p.birth - 1800 : 0, 2)).join(''),
     fame: players.map(p => b36(p.fame, 2)).join(''),

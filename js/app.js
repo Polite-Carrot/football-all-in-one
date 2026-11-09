@@ -19,7 +19,7 @@
      Personalised ads is always a local intent, defaulting to off. */
   var prefs = { sound: true, haptics: true, analytics: null, personalizedAds: false };
   var progress = freshProgress();
-  var state = { screen: 'home', gameId: null, mode: null, round: null, result: null, playing: false, finished: false };
+  var state = { screen: 'home', gameId: null, mode: null, round: null, result: null, playing: false, finished: false, lobby: 'game', vs: null };
 
   function freshProgress() {
     return { v: 1, daily: {}, stats: {}, rounds: 0, recent: {} };
@@ -107,6 +107,7 @@
   /* Straight back to the games list from anywhere, unwinding the history
      entries the deeper screens added. */
   function goHome() {
+    closeVersus();
     leaveRound();
     var depth = state.screen === 'game' ? 2 : state.screen === 'lobby' ? 1 : 0;
     if (depth) { ignorePop = true; history.go(-depth); }
@@ -116,8 +117,14 @@
 
   function onPopState() {
     if (ignorePop) { ignorePop = false; return; }
+    /* Back on the first hand-off, which sits over the versus setup. */
+    if (state.vs && state.screen === 'lobby') {
+      history.pushState({ s: 'lobby' }, '');
+      endMatch();
+      return;
+    }
     if (state.screen === 'game') {
-      if (state.playing && !state.finished) {
+      if ((state.playing && !state.finished) || state.vs) {
         history.pushState({ s: 'game' }, '');
         askQuit();
         return;
@@ -179,11 +186,13 @@
 
   function openLobby(id) {
     state.gameId = id;
+    state.lobby = 'game';
     renderLobby();
     go('lobby');
   }
 
   function renderLobby() {
+    if (state.lobby === 'versus') { renderVersusSetup(); return; }
     var game = Games.byId[state.gameId];
     if (!game) return;
     var screen = $('screen-lobby');
@@ -239,8 +248,10 @@
     if (mode === 'daily' && dailyEntry(id)) mode = 'practice';
     Sfx.unlock();
     leaveRound();
+    applyPendingData();
     var now = today();
     var key = Daily.key(now);
+    var vs = mode === 'versus' ? state.vs : null;
     state.gameId = id;
     state.mode = mode;
     state.playing = true;
@@ -249,8 +260,12 @@
 
     var screen = $('screen-game');
     screen.style.setProperty('--g', game.color);
+    screen.style.setProperty('--p', vs ? VS_COLORS[vsPlayer()] : 'transparent');
+    document.body.classList.toggle('versus', !!vs);
     $('game-title').textContent = game.name;
-    $('game-mode').textContent = mode === 'daily' ? 'Daily #' + Daily.number(now) : 'Practice';
+    $('game-mode').textContent = vs
+      ? vs.names[vsPlayer()] + (vs.games.length > 1 ? ' \u00b7 Round ' + (vs.round + 1) + '/' + vs.games.length : '')
+      : mode === 'daily' ? 'Daily #' + Daily.number(now) : 'Practice';
     $('game-meta').textContent = '';
     var root = $('game-root');
     UI.clear(root);
@@ -267,24 +282,36 @@
       mode: mode,
       date: now,
       number: Daily.number(now),
-      rand: mode === 'daily' ? Daily.rng(id + ':' + key) : Math.random,
+      /* Versus: both players share a seed and replay the first player's picks, so they get the same questions. */
+      rand: vs ? Daily.rng(vs.seed) : mode === 'daily' ? Daily.rng(id + ':' + key) : Math.random,
       choose: function (n) {
         if (mode === 'daily') return Daily.pick(n, id, now);
-        var recent = progress.recent[id] || [];
-        var keep = Math.min(recent.length, Math.max(0, n - 1), 12);
-        var avoid = recent.slice(-keep);
-        var options = [];
-        for (var i = 0; i < n; i++) if (avoid.indexOf(i) < 0) options.push(i);
-        var pick = options[Math.floor(Math.random() * options.length)];
-        progress.recent[id] = recent.concat([pick]).slice(-12);
-        return pick;
+        if (!vs) return practiceChoice(id, n);
+        var i = vs.choiceAt++;
+        if (vs.choices[i] === undefined) vs.choices[i] = practiceChoice(id, n);
+        return vs.choices[i];
       },
       setMeta: function (text) { $('game-meta').textContent = text; },
-      finish: function (result) { finishRound(game, mode, key, result); }
+      finish: function (result) {
+        if (vs) finishVsTurn(game, result);
+        else finishRound(game, mode, key, result);
+      }
     };
     track('round_start', { game: id, mode: mode });
     state.round = game.start(ctx);
     if (state.screen !== 'game') go('game');
+  }
+
+  /* A practice pick that avoids the last few seen. */
+  function practiceChoice(id, n) {
+    var recent = progress.recent[id] || [];
+    var keep = Math.min(recent.length, Math.max(0, n - 1), 12);
+    var avoid = recent.slice(-keep);
+    var options = [];
+    for (var i = 0; i < n; i++) if (avoid.indexOf(i) < 0) options.push(i);
+    var pick = options[Math.floor(Math.random() * options.length)];
+    progress.recent[id] = recent.concat([pick]).slice(-12);
+    return pick;
   }
 
   function finishRound(game, mode, key, result) {
@@ -325,7 +352,15 @@
   }
 
   function askQuit() {
+    if (state.vs) {
+      $('quit-title').textContent = 'End the match?';
+      $('quit-line').textContent = 'The match ends here for both of you and nothing is kept.';
+      $('quit-go').textContent = 'End match';
+      openModal('quit', 'quit-stay');
+      return;
+    }
     var daily = state.mode === 'daily';
+    $('quit-title').textContent = 'Leave this round?';
     $('quit-line').textContent = daily
       ? 'Today\u2019s challenge is one go. If you leave now, it ends here and counts as played.'
       : 'This practice round will be thrown away.';
@@ -335,6 +370,7 @@
 
   function confirmQuit() {
     $('quit').hidden = true;
+    if (state.vs) { endMatch(); return; }
     if (state.mode === 'daily' && state.round && state.round.quit) {
       state.round.quit();
       return;
@@ -392,6 +428,393 @@
     await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
     if (id) startRound(id, 'practice');
     maybeOfferReminder();
+  }
+
+  /* ───────── versus: pass & play ───────── */
+
+  var VS_KEY = 'footballaio.versus.v1';
+  var VS_COLORS = ['#3d8bff', '#ff4d5e'];
+  var VS_ROUNDS = [1, 3, 5];
+  var MIX = {
+    id: 'mix', name: 'Mix it up', color: '#c8f03c',
+    icon: '<svg viewBox="0 0 24 24"><path d="M3 7h3.5c4.5 0 6.5 10 11 10H21M3 17h3.5c1.8 0 3.1-1.6 4.2-3.6M21 7h-3.5c-1.8 0-3.1 1.6-4.2 3.6M18 4l3 3-3 3M18 14l3 3-3 3"/></svg>'
+  };
+  var vsSetup = loadVsSetup();
+
+  /* 38-0 is a draft, not a quiz: there is nothing for a head-to-head to compare fairly. */
+  function vsGames() { return Games.list.filter(function (g) { return g.id !== 'thirtyeight'; }); }
+
+  function loadVsSetup() {
+    var setup = { names: ['', ''], game: 'mix', rounds: 3 };
+    try {
+      var saved = JSON.parse(window.Store.read(VS_KEY) || 'null');
+      if (saved && Array.isArray(saved.names)) setup.names = [cleanName(saved.names[0]), cleanName(saved.names[1])];
+      if (saved && (saved.game === 'mix' || vsGames().some(function (g) { return g.id === saved.game; }))) setup.game = saved.game;
+      if (saved && VS_ROUNDS.indexOf(saved.rounds) >= 0) setup.rounds = saved.rounds;
+    } catch (e) { /* first visit, or unreadable: defaults */ }
+    return setup;
+  }
+
+  function cleanName(v) { return String(v || '').replace(/\s+/g, ' ').trim().slice(0, 14); }
+
+  function openVersus() {
+    state.lobby = 'versus';
+    renderLobby();
+    go('lobby');
+    track('versus_open', {});
+  }
+
+  function renderVersusSetup() {
+    $('screen-lobby').style.setProperty('--g', MIX.color);
+    $('lobby-title').textContent = 'Versus';
+    var root = $('lobby');
+    UI.clear(root);
+
+    var hero = UI.el('div', 'lobby__hero', root);
+    var badge = UI.el('div', 'vs-hero__badge', hero);
+    UI.el('i', null, badge);
+    UI.el('b', null, badge, 'VS');
+    UI.el('i', null, badge);
+    UI.el('h2', 'lobby__name', hero, 'Versus');
+    UI.el('p', 'lobby__tag', hero, 'One phone, two players, the same questions.');
+
+    var players = UI.el('div', 'card vs-players', root);
+    UI.el('span', 'kicker vs-label', players, 'Players');
+    var inputs = [0, 1].map(function (p) {
+      var row = UI.el('label', 'vs-player', players);
+      row.style.setProperty('--p', VS_COLORS[p]);
+      UI.el('span', 'vs-player__kit', row, p ? 'Away' : 'Home');
+      var input = UI.el('input', 'vs-player__input', row);
+      input.type = 'text';
+      input.maxLength = 14;
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.setAttribute('autocapitalize', 'words');
+      input.setAttribute('enterkeyhint', 'done');
+      input.placeholder = 'Player ' + (p + 1);
+      input.value = vsSetup.names[p];
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      });
+      return input;
+    });
+
+    var pick = UI.el('div', 'card', root);
+    UI.el('span', 'kicker vs-label', pick, 'Game');
+    var grid = UI.el('div', 'vs-games', pick);
+    var chips = [MIX].concat(vsGames()).map(function (game) {
+      var b = UI.el('button', 'vs-game', grid);
+      b.type = 'button';
+      b.style.setProperty('--g', game.color);
+      UI.svg(game.icon, 'vs-game__icon', b);
+      UI.el('span', 'vs-game__name', b, game.name);
+      b.addEventListener('click', function () { vsSetup.game = game.id; Sfx.play('tap'); sync(); });
+      return { el: b, id: game.id };
+    });
+
+    var rounds = UI.el('div', 'card', root);
+    UI.el('span', 'kicker vs-label', rounds, 'Rounds');
+    var seg = UI.el('div', 'vs-seg', rounds);
+    var segs = VS_ROUNDS.map(function (n) {
+      var b = UI.el('button', 'vs-seg__btn', seg, UI.plural(n, 'round'));
+      b.type = 'button';
+      b.addEventListener('click', function () { vsSetup.rounds = n; Sfx.play('tap'); sync(); });
+      return { el: b, n: n };
+    });
+    var note = UI.el('p', 'vs-note', rounds, '');
+
+    var kick = UI.el('button', 'btn btn--primary btn--wide', root, 'Kick off');
+    kick.type = 'button';
+    kick.addEventListener('click', function () {
+      vsSetup.names = inputs.map(function (i) { return cleanName(i.value); });
+      window.Store.write(VS_KEY, JSON.stringify(vsSetup));
+      startMatch();
+    });
+
+    var rules = UI.el('div', 'card rules', root);
+    UI.el('h3', null, rules, 'How it works');
+    var ol = UI.el('ol', null, rules);
+    [
+      'Each round you both play the same game, with the same questions.',
+      'When it says pass the phone, pass it, and don\u2019t watch your mate play.',
+      'Scores stay hidden until you\u2019ve both played. Better score wins the round.',
+      'Most rounds wins the match. Who goes first swaps every round.'
+    ].forEach(function (r) { UI.el('li', null, ol, r); });
+
+    function sync() {
+      chips.forEach(function (c) { c.el.setAttribute('aria-pressed', c.id === vsSetup.game ? 'true' : 'false'); });
+      segs.forEach(function (s) { s.el.setAttribute('aria-pressed', s.n === vsSetup.rounds ? 'true' : 'false'); });
+      note.textContent = vsSetup.game === 'mix'
+        ? (vsSetup.rounds > 1 ? 'A different game every round.' : 'A random game.')
+        : 'Fresh questions every round.';
+    }
+    sync();
+    $('lobby-scroll').scrollTop = 0;
+  }
+
+  function startMatch() {
+    var names = vsSetup.names.map(function (n, i) { return n || 'Player ' + (i + 1); });
+    if (names[0].toLowerCase() === names[1].toLowerCase()) names[1] += ' 2';
+    var games = vsSetup.game === 'mix'
+      ? Daily.shuffle(vsGames().map(function (g) { return g.id; }), Math.random).slice(0, vsSetup.rounds)
+      : new Array(vsSetup.rounds).fill(vsSetup.game);
+    state.vs = { names: names, games: games, round: 0, wins: [0, 0], log: [], over: false };
+    newVsRound();
+    Sfx.unlock();
+    Sfx.play('whistle');
+    track('versus_start', { game: vsSetup.game, rounds: vsSetup.rounds });
+    showHandoff();
+  }
+
+  function newVsRound() {
+    var vs = state.vs;
+    vs.seed = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    vs.choices = [];
+    vs.choiceAt = 0;
+    vs.results = [null, null];
+    vs.turn = 0;
+    vs.first = vs.round % 2;
+  }
+
+  function vsPlayer() { return (state.vs.first + state.vs.turn) % 2; }
+
+  function renderTally(el) {
+    var vs = state.vs;
+    UI.clear(el);
+    el.hidden = vs.games.length < 2;
+    [0, 1].forEach(function (p) {
+      var side = UI.el('span', 'vs-tally__side', el);
+      side.style.setProperty('--p', VS_COLORS[p]);
+      UI.el('span', 'vs-tally__name', side, vs.names[p]);
+      UI.el('b', 'vs-tally__score', side, String(vs.wins[p]));
+      if (!p) UI.el('span', 'vs-tally__dash', el, '\u2013');
+    });
+  }
+
+  function showHandoff() {
+    var vs = state.vs;
+    var p = vsPlayer(), other = 1 - p;
+    var game = Games.byId[vs.games[vs.round]];
+    var box = $('handoff');
+    box.style.setProperty('--p', VS_COLORS[p]);
+    box.style.setProperty('--g', game.color);
+    $('handoff-kicker').textContent = (vs.games.length > 1 ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
+    renderTally($('handoff-tally'));
+    $('handoff-pass').textContent = vs.turn === 0 && vs.round === 0 ? 'First up' : 'Pass the phone to';
+    $('handoff-name').textContent = vs.names[p];
+    $('handoff-note').textContent = vs.turn === 0
+      ? 'Same questions for both of you, so ' + vs.names[other] + ', no looking.'
+      : vs.names[other] + ' has played. Scores stay secret until you\u2019re done.';
+    $('handoff-go').textContent = 'I\u2019m ' + vs.names[p] + ' \u2014 kick off';
+    box.hidden = false;
+    Sfx.haptic('medium');
+    try { $('handoff-go').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
+  }
+
+  function startVsTurn() {
+    var vs = state.vs;
+    if (!vs) return;
+    $('handoff').hidden = true;
+    vs.choiceAt = 0;
+    Sfx.play('whistle');
+    startRound(vs.games[vs.round], 'versus');
+  }
+
+  function finishVsTurn(game, result) {
+    var vs = state.vs;
+    if (state.finished || !vs) return;
+    state.finished = true;
+    state.playing = false;
+    vs.results[vsPlayer()] = result;
+    track('round_complete', { game: game.id, mode: 'versus', score: typeof result.score === 'number' ? result.score : -1, perfect: !!result.perfect });
+    setTimeout(function () {
+      if (state.vs !== vs) return;
+      leaveRound();
+      if (vs.turn === 0) {
+        vs.turn = 1;
+        UI.clear($('game-root'));
+        $('game-meta').textContent = '';
+        showHandoff();
+      } else {
+        settleVsRound(game);
+        showVsResult();
+      }
+    }, UI.reduced ? 300 : 1100);
+  }
+
+  /* Higher is better. A game can supply `vs` when its score alone does not rank (501). */
+  function vsValue(game, r) {
+    if (typeof r.vs === 'number') return r.vs;
+    if (typeof r.score !== 'number') return -Infinity;
+    return game.better === 'low' ? -r.score : r.score;
+  }
+
+  function vsShown(r) { return r.vsDisplay || r.display; }
+
+  function settleVsRound(game) {
+    var vs = state.vs;
+    var a = vsValue(game, vs.results[0]), b = vsValue(game, vs.results[1]);
+    var winner = a > b ? 0 : b > a ? 1 : -1;
+    if (winner >= 0) vs.wins[winner] += 1;
+    vs.log.push({ game: game, results: vs.results.slice(), winner: winner });
+    vs.left = vs.games.length - (vs.round + 1);
+    vs.over = vs.left === 0 || Math.abs(vs.wins[0] - vs.wins[1]) > vs.left;
+    if (window.Ads) window.Ads.noteLevelComplete();
+    track('versus_round', { game: game.id, result: winner < 0 ? 'draw' : 'win' });
+    if (vs.over) track('versus_complete', { rounds: vs.log.length, result: vs.wins[0] === vs.wins[1] ? 'draw' : 'win' });
+  }
+
+  function showVsResult() {
+    var vs = state.vs;
+    var last = vs.log[vs.log.length - 1];
+    var game = last.game;
+    var multi = vs.games.length > 1;
+    var champ = vs.wins[0] > vs.wins[1] ? 0 : vs.wins[1] > vs.wins[0] ? 1 : -1;
+    var box = $('vs-result');
+    box.style.setProperty('--g', game.color);
+    $('vs-kicker').textContent = (multi ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
+    $('vs-headline').textContent = vs.over && multi
+      ? (champ < 0 ? 'Honours even' : vs.names[champ] + ' wins the match!')
+      : last.winner < 0 ? 'Dead heat' : vs.names[last.winner] + (vs.over ? ' wins!' : ' takes it');
+
+    var board = $('vs-board');
+    UI.clear(board);
+    [0, 1].forEach(function (p) {
+      var r = last.results[p];
+      var side = UI.el('div', 'vs-side' + (last.winner === p ? ' is-win' : last.winner >= 0 ? ' is-lose' : ''), board);
+      side.style.setProperty('--p', VS_COLORS[p]);
+      UI.el('span', 'vs-side__name', side, vs.names[p]);
+      UI.el('b', 'vs-side__score', side, vsShown(r));
+      UI.el('span', 'vs-side__head', side, r.headline || '');
+      if (!p) UI.el('span', 'vs-board__v', board, 'v');
+    });
+
+    var sub = '';
+    if (multi) {
+      sub = (vs.over ? 'Final score: ' : 'Match: ') + vs.names[0] + ' ' + vs.wins[0] + '\u2013' + vs.wins[1] + ' ' + vs.names[1];
+      if (vs.over && vs.left > 0) sub += ', with ' + UI.plural(vs.left, 'round') + ' to spare';
+    }
+    $('vs-sub').textContent = sub;
+
+    var detail = $('vs-detail');
+    UI.clear(detail);
+    if (vs.over && multi) {
+      var log = UI.el('ol', 'vs-log', detail);
+      vs.log.forEach(function (e) {
+        var li = UI.el('li', null, log);
+        li.style.setProperty('--g', e.game.color);
+        UI.el('span', 'vs-log__game', li, e.game.name);
+        [0, 1].forEach(function (p) {
+          var s = UI.el('span', 'vs-log__score' + (e.winner === p ? ' is-win' : ''), li, vsShown(e.results[p]));
+          s.style.setProperty('--p', VS_COLORS[p]);
+        });
+      });
+    }
+    /* Settle the arguments: either player's round, answers and all. */
+    var peek = UI.el('div', 'vs-peek', detail);
+    var area = UI.el('div', 'vs-peek__area', detail);
+    [0, 1].forEach(function (p) {
+      var r = last.results[p];
+      if (!r.detail) return;
+      var b = UI.el('button', 'btn btn--ghost btn--small', peek, vs.names[p] + '\u2019s round');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', function () {
+        var on = b.getAttribute('aria-pressed') !== 'true';
+        Array.prototype.forEach.call(peek.children, function (x) { x.setAttribute('aria-pressed', 'false'); });
+        UI.clear(area);
+        if (on) { b.setAttribute('aria-pressed', 'true'); r.detail(area); }
+      });
+    });
+
+    $('vs-next').textContent = vs.over ? 'Done' : 'Next round';
+    $('vs-alt').textContent = vs.over ? 'Rematch' : 'End match';
+    box.hidden = false;
+    box.querySelector('.sheet').scrollTop = 0;
+    var winner = vs.over ? (multi ? champ : last.winner) : -1;
+    if (winner >= 0) { UI.celebrate(VS_COLORS[winner]); Sfx.play('win'); Sfx.haptic('success'); }
+    else Sfx.play(vs.over ? 'whistle' : 'crowd');
+    try { $('vs-next').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
+  }
+
+  async function vsNext() {
+    var vs = state.vs;
+    if (!vs) return;
+    $('vs-result').hidden = true;
+    await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
+    if (state.vs !== vs) return;
+    if (vs.over) { endMatch(); return; }
+    vs.round += 1;
+    newVsRound();
+    showHandoff();
+  }
+
+  async function vsAlt() {
+    var vs = state.vs;
+    if (!vs) return;
+    if (!vs.over) { endMatch(); return; }
+    $('vs-result').hidden = true;
+    await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
+    if (state.vs === vs) startMatch();
+  }
+
+  function vsShare() {
+    var vs = state.vs;
+    if (!vs) return;
+    var lines = [APP_NAME + ' \u00b7 Versus'];
+    if (vs.games.length > 1) lines.push(vs.names[0] + ' ' + vs.wins[0] + '\u2013' + vs.wins[1] + ' ' + vs.names[1]);
+    vs.log.forEach(function (e) {
+      lines.push(e.game.name + ': ' + vs.names[0] + ' ' + vsShown(e.results[0]) + ' v ' + vsShown(e.results[1]) + ' ' + vs.names[1]);
+    });
+    UI.share(lines.join('\n')).then(function (how) { track('share', { game: 'versus', how: how }); });
+  }
+
+  /* Drop the match and its overlays without navigating. */
+  function closeVersus() {
+    state.vs = null;
+    $('handoff').hidden = true;
+    $('vs-result').hidden = true;
+    document.body.classList.remove('versus');
+  }
+
+  /* Back to the versus setup. */
+  function endMatch() {
+    var inGame = state.screen === 'game';
+    closeVersus();
+    leaveRound();
+    if (inGame) history.back();
+    else renderLobby();
+  }
+
+  /* ───────── fresh data ───────── */
+
+  var pendingData = null;
+
+  /* A build kept from last time goes in first; then the feed is asked for anything newer. */
+  function startDataFeed() {
+    var F = window.DataFeed;
+    if (!F) return;
+    F.restore().then(offerData).then(function () { return F.check(); }).then(offerData);
+  }
+
+  function offerData(d) {
+    if (!d) return;
+    pendingData = d;
+    applyPendingData();
+  }
+
+  /* Only between rounds, and in versus only before a round's first turn, so both players share one build. */
+  function applyPendingData() {
+    if (!pendingData || state.playing || (state.vs && state.vs.turn > 0)) return;
+    window.DataFeed.install(pendingData);
+    pendingData = null;
+    renderDataBuilt();
+    track('data_update', { built: window.Footy.built.slice(0, 10) });
+  }
+
+  function renderDataBuilt() {
+    var built = window.Footy.built;
+    $('data-built').textContent = built ? 'Football data from Wikidata (CC0), ' + built.slice(0, 10) + '.' : '';
   }
 
   /* ───────── settings ───────── */
@@ -795,7 +1218,7 @@
       /* A tapped reminder opens the games list, unless a round is in
          progress: that is left alone rather than thrown away. */
       window.Reminders.onOpen(function () {
-        if (state.screen === 'game' && state.playing) return;
+        if (state.vs || (state.screen === 'game' && state.playing)) return;
         closeReminderOffer();
         closeResult();
         goHome();
@@ -826,6 +1249,11 @@
     if (!$('settings-modal').hidden) { closeModal('settings-modal'); return; }
     if (!$('reset-modal').hidden) { closeModal('reset-modal'); return; }
     if (!$('quit').hidden) { closeModal('quit'); return; }
+    if (!$('vs-result').hidden) { vsNext(); return; }
+    if (!$('handoff').hidden) {
+      if (state.screen === 'lobby') endMatch(); else askQuit();
+      return;
+    }
     if (!$('result').hidden) { resultContinue(); return; }
     if (state.screen !== 'home') history.back();
   }
@@ -873,6 +1301,15 @@
     $('result-next').addEventListener('click', resultContinue);
     $('result-again').addEventListener('click', resultAgain);
     $('result-share').addEventListener('click', shareResult);
+
+    $('home-versus').addEventListener('click', function () { Sfx.unlock(); Sfx.play('tap'); openVersus(); });
+    $('handoff-go').addEventListener('click', startVsTurn);
+    $('handoff-quit').addEventListener('click', function () {
+      if (state.screen === 'lobby') endMatch(); else askQuit();
+    });
+    $('vs-next').addEventListener('click', vsNext);
+    $('vs-alt').addEventListener('click', vsAlt);
+    $('vs-share').addEventListener('click', vsShare);
 
     $('settings').addEventListener('click', function () {
       Sfx.unlock();
@@ -930,10 +1367,11 @@
       $('settings-modal').hidden = true;
       openPrivacyDataModal();
     });
-    $('data-built').textContent = window.Footy.built ? 'Football data from Wikidata (CC0), ' + window.Footy.built + '.' : '';
+    renderDataBuilt();
 
     bindStoreAndReminders();
     renderHome();
+    startDataFeed();
   }
 
   init();

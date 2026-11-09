@@ -37,3 +37,6 @@ ios/App/App/public/
 # Secrets / signing
 *.keystore
 *.jks
+
+# data feed packaging (tools/publish-feed.js)
+_site/

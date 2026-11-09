@@ -119,6 +119,9 @@
         }
         ctx.finish({
           score: checked ? n : null,
+          /* Versus: any checkout beats none, fewer names is better; without one, less left is better. */
+          vs: checked ? 1000 - n : -left,
+          vsDisplay: checked ? null : left + ' left',
           display: checked ? UI.plural(n, 'name') : 'No checkout',
           headline: checked ? (n <= 3 ? 'GAME SHOT!' : n <= 5 ? 'Checked out!' : 'Got there') : 'Bust night',
           sub: Footy.boardText(bd) + (checked ? '' : ' \u00b7 ' + left + ' left'),

@@ -261,6 +261,15 @@
     return norm(entry.raw || entry.label) === norm(answer);
   }
 
+  /* Switch to a newer data build (js/datafeed.js), dropping everything unpacked from the old one. */
+  function reload(db, sets) {
+    DB = db;
+    SETS = sets;
+    names = null;
+    teamIndex = null;
+    kinds = {};
+  }
+
   g.Footy = {
     norm: norm,
     clubKey: clubKey,
@@ -283,6 +292,7 @@
     boardValue: boardValue,
     search: search,
     same: same,
-    built: DB.built || ''
+    reload: reload,
+    get built() { return DB.built || ''; }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
