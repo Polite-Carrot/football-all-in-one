@@ -565,6 +565,7 @@
     if (remote) {
       var got = UI.el('div', 'card', root);
       var paste = pasteBox(got, 'Got a code?');
+      paste.field.id = 'vs-code-field';
       UI.el('p', 'vs-note', got, 'Paste a match code from your mate to play it, or their result code to see who won.');
       paste.go.textContent = 'Play it';
       paste.go.addEventListener('click', function () { keepNames(); window.Store.write(VS_KEY, JSON.stringify(vsSetup)); }, true);
@@ -645,7 +646,9 @@
     box.style.setProperty('--g', game.color);
     $('handoff-kicker').textContent = (vs.games.length > 1 ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
     renderTally($('handoff-tally'));
+    $('handoff-board').hidden = true;
     if (vs.remote) {
+      if (vs.round === 0) renderBoard($('handoff-board'), vs.base, {});
       $('handoff-tally').hidden = vs.remote !== 'chase' || vs.games.length < 2;
       $('handoff-pass').textContent = vs.round === 0 ? 'First up' : 'Next up';
       $('handoff-name').textContent = vs.names[p];
@@ -718,7 +721,8 @@
     if (winner >= 0) vs.wins[winner] += 1;
     vs.log.push({ game: game, results: vs.results.slice(), winner: winner });
     vs.left = vs.games.length - (vs.round + 1);
-    vs.over = vs.left === 0 || Math.abs(vs.wins[0] - vs.wins[1]) > vs.left;
+    /* Remote matches play every round, so leaderboard totals always cover the whole match. */
+    vs.over = vs.left === 0 || (!vs.remote && Math.abs(vs.wins[0] - vs.wins[1]) > vs.left);
     if (window.Ads) window.Ads.noteLevelComplete();
     track('versus_round', { game: game.id, result: winner < 0 ? 'draw' : 'win' });
     if (vs.over) track('versus_complete', { rounds: vs.log.length, result: vs.wins[0] === vs.wins[1] ? 'draw' : 'win' });
@@ -753,6 +757,12 @@
     if (multi) {
       sub = (vs.over ? 'Final score: ' : 'Match: ') + vs.names[0] + ' ' + vs.wins[0] + '\u2013' + vs.wins[1] + ' ' + vs.names[1];
       if (vs.over && vs.left > 0) sub += ', with ' + UI.plural(vs.left, 'round') + ' to spare';
+    }
+    if (vs.remote && vs.over) {
+      var totals = [0, 1].map(function (p) {
+        return vs.log.reduce(function (s, e) { return s + roundPoints(e.game, e.results[p]); }, 0);
+      });
+      sub += (sub ? '. ' : '') + 'Points: ' + vs.names[0] + ' ' + totals[0] + ', ' + vs.names[1] + ' ' + totals[1] + ' (out of ' + vs.log.length * 100 + ')';
     }
     $('vs-sub').textContent = sub;
 
@@ -791,6 +801,7 @@
     $('vs-share').hidden = false;
     $('vs-alt').textContent = vs.over ? (vs.remote === 'chase' ? 'Send result' : 'Rematch') : 'End match';
     if (vs.remote === 'chase' && vs.over) codeBox(detail, vs.resultCode, 'Send this to ' + vs.names[1 - vs.me] + ' so they see who won too.');
+    if (vs.remote && vs.over) renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted });
     box.hidden = false;
     box.querySelector('.sheet').scrollTop = 0;
     var winner = vs.over ? (multi ? champ : last.winner) : -1;
@@ -834,6 +845,10 @@
     vs.log.forEach(function (e) {
       lines.push(e.game.name + ': ' + vs.names[0] + ' ' + vsShown(e.results[0]) + ' v ' + vsShown(e.results[1]) + ' ' + vs.names[1]);
     });
+    if (vs.remote) {
+      var totals = [0, 1].map(function (p) { return vs.log.reduce(function (s, e) { return s + roundPoints(e.game, e.results[p]); }, 0); });
+      lines.push('TOTAL: ' + vs.names[0] + ' ' + totals[0] + ' v ' + totals[1] + ' ' + vs.names[1] + ' (out of ' + vs.log.length * 100 + ')');
+    }
     UI.share(lines.join('\n')).then(function (how) { track('share', { game: 'versus', how: how }); });
   }
 
@@ -944,13 +959,50 @@
   }
 
   function matchText(vs) {
-    return vs.names[vs.me] + ' wants a game of ' + APP_NAME + '! ' + remoteGamesText(vs.games) + '.\n' +
-      'Open Versus \u2192 Play by code and paste this message. We can play at the same time:\n' + vs.code;
+    return vs.names[vs.me] + ' wants a game of ' + APP_NAME + ': ' + remoteGamesText(vs.games) + '. We can play at the same time.\n' +
+      'Tap to play: ' + linkFor(vs.code);
+  }
+
+  var PLAY_URL = 'https://polite-carrot.github.io/football-all-in-one/play/#';
+  function linkFor(code) { return PLAY_URL + code; }
+
+  function clampPoints(v) { return Math.max(0, Math.min(100, Math.round(v))); }
+
+  /* Every round scores the share of a perfect game it achieved, out of 100, so
+     rounds of different games add up like for like:
+     Tenable 10/10, Tension every safe answer, Back Yourself every ladder topped,
+     Pointless five pointless answers, LONGSHOTS seven 88m shots, 501 a
+     three-name checkout (a 15-name checkout is 20; no checkout scores under that). */
+  function roundPoints(game, r) {
+    var v = vsValue(game, r);
+    if (!isFinite(v)) return 0;
+    var frac = /^(\d+)\/(\d+)$/.exec(vsShown(r) || '');
+    switch (game.id) {
+      case 'tenable': return clampPoints(v * 10);
+      case '501': return v > 0 ? clampPoints(300 / Math.max(3, 1000 - v)) : clampPoints((501 + v) / 501 * 19);
+      case 'pointless': return clampPoints(100 + v / 5);
+      case 'longshots': return clampPoints(v / 616 * 100);
+      case 'tension':
+      case 'backyourself': return frac ? clampPoints(Number(frac[1]) / Number(frac[2]) * 100) : 0;
+      default: return 0;
+    }
+  }
+
+  function packedTotal(games, packed) {
+    return packed.reduce(function (s, p, i) { return s + roundPoints(Games.byId[games[i]], unpackResult(p)); }, 0);
   }
 
   function resultText(vs) {
-    return vs.names[vs.me] + '\u2019s ' + APP_NAME + ' result is in.\n' +
-      'Open Versus \u2192 Play by code and paste this message to see who won:\n' + vs.resultCode;
+    var lines = ['\u26BD ' + vs.names[vs.me] + '\u2019s Versus result \u00b7 ' + APP_NAME];
+    vs.mine.forEach(function (p, i) {
+      var game = Games.byId[vs.games[i]];
+      lines.push('R' + (i + 1) + ' ' + game.name + ': ' + p[1] + ' \u00b7 ' + roundPoints(game, unpackResult(p)) + '/100');
+    });
+    lines.push('TOTAL: ' + packedTotal(vs.games, vs.mine) + '/' + vs.mine.length * 100 + ' (each round scored out of 100: % of a perfect game)');
+    lines.push(vs.remote === 'chase'
+      ? 'Tap to see how we compare: ' + linkFor(vs.resultCode)
+      : 'Can you beat it? Tap to play the same questions, or see who won: ' + linkFor(vs.resultCode));
+    return lines.join('\n');
   }
 
   function shareCode(text) {
@@ -958,16 +1010,17 @@
   }
 
   function codeBox(parent, code, note) {
+    var link = linkFor(code);
     var box = UI.el('div', 'vs-code', parent);
     UI.el('p', 'vs-code__note', box, note);
-    var text = UI.el('code', 'vs-code__text', box, code);
+    var text = UI.el('code', 'vs-code__text', box, link);
     text.tabIndex = 0;
-    var copy = UI.el('button', 'btn btn--ghost btn--small', box, 'Copy code');
+    var copy = UI.el('button', 'btn btn--ghost btn--small', box, 'Copy link');
     copy.type = 'button';
     copy.addEventListener('click', function () {
-      Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(code))
-        .then(function () { UI.toast('Code copied'); })
-        .catch(function () { UI.toast('Select the code and copy it'); });
+      Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(link))
+        .then(function () { UI.toast('Link copied'); })
+        .catch(function () { UI.toast('Select the link and copy it'); });
     });
   }
 
@@ -1009,7 +1062,8 @@
   }
 
   function createMatch() {
-    var me = vsSetup.me || 'Player 1';
+    if (needName()) return;
+    var me = vsSetup.me;
     var games = vsSetup.game === 'mix'
       ? Daily.shuffle(vsGames().map(function (g) { return g.id; }), Math.random).slice(0, vsSetup.rounds)
       : new Array(vsSetup.rounds).fill(vsSetup.game);
@@ -1033,7 +1087,7 @@
     $('vs-sub').textContent = 'Then you both play, at the same time if you like. Same questions on both phones.';
     var detail = $('vs-detail');
     UI.clear(detail);
-    codeBox(detail, vs.code, 'They paste it in Versus \u2192 Play by code.');
+    codeBox(detail, vs.code, 'They tap the link to open the same match on their phone.');
     $('vs-next').textContent = 'Kick off';
     $('vs-alt').textContent = 'Send code';
     $('vs-share').hidden = true;
@@ -1050,6 +1104,7 @@
     var me = vsSetup.me;
     if (code.t === 'm') {
       if (mine) { UI.toast('You\u2019ve already played this one'); showOwnScores(fromStored(mine, code.s)); return; }
+      if (needName()) return;
       closeVersus();
       applyPendingData();
       var vs;
@@ -1066,6 +1121,7 @@
     }
     if (mine && mine.p === code.p) { UI.toast('That\u2019s your own result \u2014 send it to your mate'); return; }
     if (mine) { showFinal(mine, code); return; }
+    if (needName()) return;
     /* They finished first: play the same rounds, with their scores shown round by round. */
     closeVersus();
     applyPendingData();
@@ -1112,7 +1168,90 @@
     store.played[vs.base] = { p: vs.me, n: vs.names[vs.me], opp: vs.names[1 - vs.me], g: vs.games, b: vs.built, r: vs.mine };
     saveRemote(store);
     vs.resultCode = encodeCode({ v: 2, t: 's', g: vs.games, s: vs.base, b: vs.built, n: vs.names[vs.me], p: vs.me, r: vs.mine });
+    vs.posted = postScore(vs.base);
     track('versus_code', { rounds: vs.mine.length });
+  }
+
+  /* Puts this phone's stored result for a match on its leaderboard, once. */
+  function postScore(base) {
+    var store = remoteStore();
+    var mine = store.played[base];
+    if (!mine || !window.Leaderboard) return Promise.resolve(false);
+    if (mine.sent) return Promise.resolve(true);
+    var scores = mine.r.map(function (p, i) { return roundPoints(Games.byId[mine.g[i]], unpackResult(p)); });
+    return window.Leaderboard.submit(base, mine.n, scores).then(function (ok) {
+      if (!ok) return false;
+      var now = remoteStore();
+      if (now.played[base]) { now.played[base].sent = true; saveRemote(now); }
+      return true;
+    });
+  }
+
+  function myTotal(vs) { return vs.mine.length ? packedTotal(vs.games, vs.mine) : undefined; }
+
+  function needName() {
+    if (vsSetup.me) return false;
+    UI.toast('Add your name first \u2014 it goes on the leaderboard');
+    var input = document.querySelector('.vs-player__input');
+    if (input) input.focus();
+    return true;
+  }
+
+  /* The match's public board: the score to beat before kick-off, and where you rank after. */
+  function renderBoard(parent, seed, opts) {
+    var LB = window.Leaderboard;
+    var el = parent.id === 'handoff-board' ? parent : UI.el('div', 'lb', parent);
+    UI.clear(el);
+    el.hidden = !LB;
+    if (!LB) return;
+    var head = UI.el('div', 'lb__head', el);
+    UI.el('span', 'kicker', head, 'Leaderboard');
+    var meta = UI.el('span', 'lb__meta', head, 'Loading\u2026');
+    var list = UI.el('ol', 'lb__list', el);
+    var me = LB.playerId();
+    Promise.resolve(opts.posted)
+      .then(function () { return LB.load(seed, opts.after ? 100 : 5, opts.after ? opts.total : undefined); })
+      .then(function (b) {
+        if (!el.isConnected) return;
+        if (!b.players) {
+          meta.textContent = 'No scores yet';
+          UI.el('li', 'lb__empty', list, opts.after ? 'Your score is on its way to the board.' : 'Nobody has played this yet. Set the score to beat.');
+          return;
+        }
+        var rankOf = function (e) { return 1 + b.top.filter(function (x) { return x.total > e.total; }).length; };
+        var row = function (e, rank) {
+          var li = UI.el('li', 'lb__row' + (e.id === me ? ' is-me' : ''), list);
+          UI.el('span', 'lb__rank', li, '#' + rank);
+          UI.el('span', 'lb__name', li, e.id === me ? e.name + ' (you)' : e.name);
+          UI.el('b', 'lb__total', li, String(e.total));
+          return li;
+        };
+        if (!opts.after) {
+          meta.textContent = UI.plural(b.players, 'player');
+          UI.el('p', 'lb__beat', el, 'Score to beat: ' + b.top[0].total + ' by ' + b.top[0].name);
+          el.insertBefore(el.lastChild, list);
+          b.top.forEach(function (e) { row(e, rankOf(e)); });
+          return;
+        }
+        meta.textContent = b.rank ? 'You\u2019re #' + b.rank + ' of ' + b.players : UI.plural(b.players, 'player');
+        var rows = b.top.map(function (e) { var li = row(e, rankOf(e)); li.hidden = true; return { e: e, li: li }; });
+        var shown = 10;
+        var show = function () {
+          rows.forEach(function (r, i) { r.li.hidden = i >= shown && r.e.id !== me; });
+          more.hidden = rows.length <= shown;
+        };
+        if (b.rank && !b.top.some(function (e) { return e.id === me; }) && typeof opts.total === 'number') {
+          var you = UI.el('li', 'lb__row is-me', list);
+          UI.el('span', 'lb__rank', you, '#' + b.rank);
+          UI.el('span', 'lb__name', you, 'You');
+          UI.el('b', 'lb__total', you, String(opts.total));
+        }
+        var more = UI.el('button', 'btn btn--ghost btn--small lb__more', el, 'Show top ' + rows.length);
+        more.type = 'button';
+        more.addEventListener('click', function () { shown = rows.length; show(); });
+        show();
+      })
+      .catch(function () { if (el.isConnected) meta.textContent = 'Leaderboard offline'; });
   }
 
   function fromStored(mine, base) {
@@ -1122,6 +1261,7 @@
     var vs = remoteVs('live', mine.p, mine.g, base, names, mine.b);
     vs.mine = mine.r;
     vs.resultCode = encodeCode({ v: 2, t: 's', g: mine.g, s: base, b: mine.b, n: mine.n, p: mine.p, r: mine.r });
+    vs.posted = postScore(base);
     state.vs = vs;
     return vs;
   }
@@ -1145,11 +1285,15 @@
       var li = UI.el('li', null, log);
       li.style.setProperty('--g', game.color);
       UI.el('span', 'vs-log__game', li, game.name);
-      var s = UI.el('span', 'vs-log__score is-win', li, p[1]);
+      var s = UI.el('span', 'vs-log__score is-win', li, p[1] + ' \u00b7 ' + roundPoints(game, unpackResult(p)));
       s.style.setProperty('--p', VS_COLORS[vs.me]);
     });
-    codeBox(detail, vs.resultCode, 'Your result code. ' + opp + ' pastes it in Versus \u2192 Play by code.');
-    pasteBox(detail, opp + '\u2019s result code');
+    var total = UI.el('li', 'vs-log__total', log);
+    UI.el('span', 'vs-log__game', total, 'Total \u00b7 % of perfect');
+    UI.el('span', 'vs-log__score is-win', total, packedTotal(vs.games, vs.mine) + '/' + vs.mine.length * 100);
+    codeBox(detail, vs.resultCode, 'Your result link. ' + opp + ' taps it to see who won, or to play if they haven\u2019t yet.');
+    pasteBox(detail, opp + '\u2019s result link or code');
+    renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted });
     $('vs-next').textContent = 'Done';
     $('vs-alt').textContent = 'Send result';
     $('vs-share').hidden = true;
@@ -1179,6 +1323,8 @@
     vs.round = n - 1;
     vs.left = mine.g.length - n;
     vs.over = true;
+    vs.mine = mine.r;
+    vs.posted = postScore(code.s);
     closeVersus();
     state.vs = vs;
     track('versus_final', { rounds: n });
@@ -1770,6 +1916,40 @@
     bindStoreAndReminders();
     renderHome();
     startDataFeed();
+    bindLinks();
+  }
+
+  /* footballaio://play/FAIO2... from a tapped Versus link, at launch or while the app is open. */
+  function bindLinks() {
+    var App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (App) {
+      App.addListener('appUrlOpen', function (e) { openLink(e && e.url); });
+      App.getLaunchUrl().then(function (r) { if (r && r.url) openLink(r.url); }).catch(function () {});
+    }
+    if (/FAIO2\./.test(location.hash)) openLink(location.hash);
+  }
+
+  function openLink(url) {
+    if (!decodeCode(url)) return;
+    (function waitForBoot(tries) {
+      if (document.getElementById('boot') && tries < 40) { setTimeout(function () { waitForBoot(tries + 1); }, 150); return; }
+      if (state.playing && !state.finished) { UI.toast('Finish or leave this round, then tap the link again'); return; }
+      $('result').hidden = true;
+      var away = state.screen !== 'home';
+      if (away) goHome();
+      setTimeout(function () {
+        vsSetup.where = 'remote';
+        state.lobby = 'versus';
+        renderLobby();
+        go('lobby');
+        if (vsSetup.me) { openCode(url); return; }
+        var field = $('vs-code-field');
+        if (field) field.value = url;
+        var name = document.querySelector('.vs-player__input');
+        if (name) name.focus();
+        UI.toast('Add your name, then tap Play it');
+      }, away ? 350 : 0);
+    })(0);
   }
 
   init();

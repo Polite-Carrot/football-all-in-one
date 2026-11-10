@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// Versus leaderboards (js/leaderboard.js). Anyone with a match link can read
+// its board and post one score per phone; nobody can change or delete one.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /boards/{board}/entries/{player} {
+      allow read: if board.matches('^[a-zA-Z0-9]{6,40}$');
+      allow create: if board.matches('^[a-zA-Z0-9]{6,40}$')
+        && player.matches('^[a-z0-9]{20}$')
+        && request.resource.data.keys().hasOnly(['name', 'total', 'rounds', 'scores', 'created'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 14
+        && request.resource.data.rounds is int
+        && request.resource.data.rounds >= 1
+        && request.resource.data.rounds <= 5
+        && request.resource.data.scores is list
+        && request.resource.data.scores.size() == request.resource.data.rounds
+        && request.resource.data.total is int
+        && request.resource.data.total >= 0
+        && request.resource.data.total <= request.resource.data.rounds * 100
+        && request.resource.data.created == request.time;
+      allow update, delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

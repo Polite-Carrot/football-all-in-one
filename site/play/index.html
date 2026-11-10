@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#04110a">
+<meta name="robots" content="noindex">
+<title>Football All-in-One · Versus</title>
+<meta property="og:title" content="Football All-in-One · Versus">
+<meta property="og:description" content="You've been challenged. Tap to play the same questions.">
+<link rel="icon" href="../app-icon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: dark; --lime: #c8f03c; --ink: #f2f7f3; --soft: #a9bdb0; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+    background: radial-gradient(120% 70% at 50% 0%, #123524, #04110a 62%);
+    color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center;
+  }
+  main { width: 100%; max-width: 380px; display: grid; gap: 16px; justify-items: center; }
+  img { width: 96px; height: 96px; border-radius: 22px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+  h1 { margin: 0; font: italic 800 30px/1 "Arial Narrow", sans-serif; text-transform: uppercase; }
+  p { margin: 0; color: var(--soft); }
+  .btn { display: block; width: 100%; padding: 16px; border-radius: 999px; background: var(--lime); color: #10200a; font-weight: 800; font-size: 18px; text-decoration: none; text-transform: uppercase; letter-spacing: .03em; }
+  .ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .25); font-size: 15px; padding: 12px; }
+  code { display: block; width: 100%; max-height: 80px; overflow: auto; padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, .07); font: 12px/1.4 ui-monospace, Menlo, monospace; word-break: break-all; text-align: left; user-select: all; }
+  small { color: var(--soft); }
+  a { color: var(--lime); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <img src="../app-icon.svg" alt="">
+  <h1>Versus</h1>
+  <p id="lead">Opening Football All-in-One&hellip;</p>
+  <a id="open" class="btn" href="#">Open in the app</a>
+  <div id="fallback" hidden>
+    <p>Don&rsquo;t have the app yet? Get it, then tap the link again, or paste this code into <b>Versus &rarr; Play by code</b>:</p>
+    <code id="code"></code>
+    <p><button id="copy" class="btn ghost" type="button">Copy code</button></p>
+    <p><a id="play-store" href="https://play.google.com/store/apps/details?id=com.politecarrot.footballallinone">Get it on Google Play</a>
+      <br><small>On iPhone, search &ldquo;Football All-in-One&rdquo; in the App Store.</small></p>
+  </div>
+  <p id="bad" hidden>This link looks incomplete. Ask your mate to send it again.</p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var code = decodeURIComponent(location.hash.slice(1));
+  var ok = /^FAIO2\.[A-Za-z0-9_-]{8,6000}$/.test(code);
+  if (!ok) {
+    document.getElementById('lead').hidden = true;
+    document.getElementById('open').hidden = true;
+    document.getElementById('bad').hidden = false;
+    return;
+  }
+  var android = /Android/i.test(navigator.userAgent);
+  var appUrl = 'footballaio://play/' + code;
+  /* Chrome on Android opens apps through intent: URLs and falls back to the store itself. */
+  var target = android
+    ? 'intent://play/' + code + '#Intent;scheme=footballaio;package=com.politecarrot.footballallinone;end'
+    : appUrl;
+  var open = document.getElementById('open');
+  open.href = target;
+  document.getElementById('code').textContent = code;
+  document.getElementById('copy').addEventListener('click', function () {
+    navigator.clipboard.writeText(code).then(function () {
+      document.getElementById('copy').textContent = 'Copied';
+    });
+  });
+  setTimeout(function () { location.href = target; }, 60);
+  /* Still here after a moment: the app is probably not installed. */
+  setTimeout(function () {
+    document.getElementById('lead').textContent = 'Tap below to open it in the app.';
+    document.getElementById('fallback').hidden = false;
+  }, 1600);
+})();
+</script>
+</body>
+</html>

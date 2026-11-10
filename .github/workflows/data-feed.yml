@@ -16,6 +16,7 @@ on:
       - 'js/data/seasons.js'
       - 'tools/build-data.js'
       - 'tools/publish-feed.js'
+      - 'site/**'
 
 permissions:
   contents: read
@@ -42,6 +43,8 @@ jobs:
         run: node --test test/content.test.js
       - name: Package feed
         run: node tools/publish-feed.js _site/feed/v1
+      - name: Add the Versus link page
+        run: cp -R site/. _site/ && cp assets/app-icon.svg _site/app-icon.svg
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
