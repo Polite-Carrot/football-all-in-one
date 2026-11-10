@@ -1,22 +1,29 @@
 /* Football Tenable — name the ten answers on the board. A wrong answer costs
- * one of three lives; find all ten and it's Tenable. */
+ * one of four lives; two hints show an empty slot's initials. Find all ten
+ * and it's Tenable. */
 (function (g) {
   'use strict';
 
   var UI = g.UI, Games = g.Games;
-  var LIVES = 3;
+  var LIVES = 4;
+  var HINTS = 2;
+
+  function initials(name) {
+    return name.split(/[\s-]+/).filter(Boolean).map(function (w) { return w.charAt(0).toUpperCase() + '.'; }).join(' ');
+  }
 
   Games.register({
     id: 'tenable',
     name: 'Football Tenable',
     short: 'Tenable',
     color: '#3d8bff',
-    tagline: 'Name the top ten. Three lives.',
+    tagline: 'Name the top ten. Four lives.',
     icon: '<svg viewBox="0 0 24 24"><rect x="4" y="2.5" width="16" height="19" rx="2.5"/><path d="M8 7h8M8 11h8M8 15h8M8 19h4"/></svg>',
     rules: [
       'There are ten answers on the board. Type a name and pick it from the list.',
       'Every right answer drops into its place on the board.',
-      'A wrong answer costs a life. You have three.',
+      'A wrong answer costs a life. You have four.',
+      'Stuck? Two hints show the initials of an empty slot.',
       'Find all ten before you run out and it\u2019s Tenable!'
     ],
     better: 'high',
@@ -52,14 +59,43 @@
 
       var board = Games.board(root, def);
       var wrongEl = UI.el('div', 'chips', root);
-      var giveUp = UI.el('button', 'btn btn--quiet btn--small tn__giveup', root, 'Give up');
+      var tools = UI.el('div', 'tn__tools', root);
+      var hints = HINTS;
+      var hinted = new Set();
+      var hintBtn = UI.el('button', 'btn btn--ghost btn--small', tools, '');
+      hintBtn.type = 'button';
+      var giveUp = UI.el('button', 'btn btn--quiet btn--small tn__giveup', tools, 'Give up');
       giveUp.type = 'button';
       giveUp.addEventListener('click', function () { end(); });
+      hintBtn.addEventListener('click', hint);
+      syncHint();
       ctx.setMeta(lives + ' lives');
       setTimeout(box.focus, 350);
 
+      function syncHint() {
+        hintBtn.textContent = 'Hint (' + hints + ')';
+        hintBtn.disabled = hints <= 0 || over;
+      }
+
+      /* Unranked boards fill in answer order, so a slot hint would point at the wrong row: those get a toast. */
+      function hint() {
+        if (over || hints <= 0) return;
+        var open = [];
+        def.a.forEach(function (pair, i) { if (!found.has(i) && !hinted.has(i)) open.push(i); });
+        if (!open.length) return;
+        var i = open[Math.floor(ctx.rand() * open.length)];
+        hints -= 1;
+        hinted.add(i);
+        var text = initials(def.type === 'club' ? g.Footy.prettyClub(def.a[i][1]) : def.a[i][1]);
+        if (def.unranked) UI.toast('One of them: ' + text);
+        else board.hint(i, text);
+        g.Sfx.play('tap');
+        syncHint();
+      }
+
       function answer(entry) {
         if (over) return;
+        ctx.moved();
         var i = Games.matchAnswer(def, entry);
         if (i >= 0 && found.has(i)) {
           UI.toast('Already on the board');
@@ -92,7 +128,7 @@
         if (over) return;
         over = true;
         box.setDisabled(true);
-        giveUp.hidden = true;
+        tools.hidden = true;
         def.a.forEach(function (pair, i) { if (!found.has(i)) board.reveal(i, 'miss'); });
         var n = found.size;
         var squares = def.a.map(function (p, i) { return found.has(i) ? '\uD83D\uDFE9' : '\u2B1B'; }).join('');
@@ -108,7 +144,7 @@
             def.a.forEach(function (pair, i) { if (!found.has(i)) b.reveal(i, 'miss'); });
           },
           share: squares + ' ' + n + '/10' + (n === 10 ? ' \uD83C\uDFC6' : ''),
-          track: { list: def.id, found: n, lives: lives }
+          track: { list: def.id, found: n, lives: lives, hints: HINTS - hints }
         });
       }
 

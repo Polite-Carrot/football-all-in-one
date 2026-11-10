@@ -150,6 +150,7 @@
       function place(node, x, y) { node.setAttribute('cx', x.toFixed(2)); node.setAttribute('cy', y.toFixed(2)); }
 
       async function result(entry, how) {
+        ctx.moved();
         waiting = false;
         if (timer) timer.stop();
         box.setDisabled(true);

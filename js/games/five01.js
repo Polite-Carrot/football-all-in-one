@@ -35,7 +35,7 @@
 
       var root = UI.el('div', 'd5', ctx.root);
       Games.questionCard(root, 'Today\u2019s board', Footy.boardText(bd),
-        bd.t === 'caps' ? 'Former internationals only.' : 'Former players only, whole spells at the club.');
+        bd.t === 'caps' ? 'Former internationals only.' : 'Past and present players. League games only, all spells added up.');
 
       var top = UI.el('div', 'd5__top', root);
       var led = UI.el('div', 'led', top);
@@ -76,6 +76,7 @@
           UI.toast('No number for ' + entry.label + ' on this board \u2014 try another');
           return;
         }
+        ctx.moved();
         used.add(p);
         var t = { name: entry.label, kind: 'hit', value: 0 };
         if (v.kind === 'never' || v.kind === 'none') {

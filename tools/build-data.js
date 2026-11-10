@@ -11,6 +11,10 @@
  * number of Wikipedia language editions — the last is the fame measure that
  * scores Pointless and LONGSHOTS answers.
  *
+ * Wikidata misses many recent transfers, so each club's Wikipedia players
+ * category is checked too: missing members, and current players, get their
+ * spells from the Wikipedia infobox (league apps, kept up to date by editors).
+ *
  * Writes js/data/db.js (players + team memberships) and js/data/categories.js
  * (the curated question sets, chosen here so every one has a sensible size). */
 
@@ -179,6 +183,31 @@ async function sparql(key, query) {
   }
 }
 
+async function wiki(key, params) {
+  const file = path.join(CACHE, key + '.json');
+  if (!FRESH && fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+  const url = 'https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', formatversion: '2', maxlag: '5', ...params });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': UA } });
+      if (res.status === 429) {
+        if (attempt >= 8) throw new Error('HTTP 429');
+        await sleep(Math.max(Number(res.headers.get('retry-after')) || 0, 10 * attempt) * 1000);
+        continue;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.code);
+      fs.writeFileSync(file, JSON.stringify(json));
+      await sleep(1000);
+      return json;
+    } catch (err) {
+      if (attempt >= 5) throw new Error(key + ': ' + err.message);
+      await sleep(2000 * attempt);
+    }
+  }
+}
+
 const qid = uri => Number(uri.slice(uri.lastIndexOf('/Q') + 2));
 const year = iso => (iso && /^\d{4}/.test(iso) ? Number(iso.slice(0, 4)) : 0);
 const num = v => (v === undefined || v === '' ? null : Math.round(Number(v)));
@@ -318,6 +347,98 @@ const BOARD_TEAMS = new Set(['arsenal', 'astonvilla', 'blackburn', 'chelsea', 'p
   'spurs', 'westham', 'celtic', 'rangers', 'realmadrid', 'barcelona', 'juventus', 'milan', 'inter', 'bayern',
   'eng', 'sco', 'wal', 'nir', 'irl']);
 
+/* ─────────────── Wikipedia supplement ─────────────── */
+
+const pageTitle = s => { s = s.replace(/_/g, ' ').trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
+
+/* The club article's own title and every redirect to it: infobox links use any of them. */
+async function clubTitles(team) {
+  const names = new Set();
+  let cont = {}, canonical = team.title;
+  for (let n = 0; cont; n++) {
+    const json = await wiki('wp-title-' + team.key + '-' + n, { action: 'query', titles: team.title, redirects: '1', prop: 'redirects', rdlimit: 'max', rdnamespace: '0', ...cont });
+    const page = json.query.pages[0];
+    canonical = page.title;
+    names.add(page.title);
+    for (const r of page.redirects || []) names.add(r.title);
+    cont = json.continue || null;
+  }
+  return { canonical, names };
+}
+
+async function categoryMembers(team, canonical) {
+  const out = new Map();
+  let cont = {};
+  for (let n = 0; cont; n++) {
+    const json = await wiki('wp-cat-' + team.key + '-' + n, { action: 'query', generator: 'categorymembers', gcmtitle: 'Category:' + canonical + ' players',
+      gcmnamespace: '0', gcmlimit: '500', prop: 'pageprops', ppprop: 'wikibase_item', ...cont });
+    for (const p of (json.query && json.query.pages) || []) {
+      const item = p.pageprops && p.pageprops.wikibase_item;
+      if (item) out.set(Number(item.slice(1)), p.pageid);
+    }
+    cont = json.continue || null;
+  }
+  return out;
+}
+
+async function articles(pageids) {
+  const out = new Map();
+  for (let i = 0; i < pageids.length; i += 50) {
+    const batch = pageids.slice(i, i + 50);
+    const json = await wiki('wp-text-' + batch[0] + '-' + batch.length, { action: 'query', pageids: batch.join('|'), prop: 'revisions', rvprop: 'content', rvslots: 'main' });
+    for (const p of json.query.pages) if (p.revisions) out.set(p.pageid, p.revisions[0].slots.main.content);
+    process.stdout.write('\r  wikipedia infoboxes ' + Math.min(i + 50, pageids.length) + '/' + pageids.length);
+  }
+  process.stdout.write('\n');
+  return out;
+}
+
+/* Senior club rows of {{Infobox football biography}}: link target, league apps, goals, years. */
+function infobox(text) {
+  text = text.replace(/<!--[\s\S]*?-->/g, '').replace(/<ref[^>]*\/>/g, '').replace(/<ref[\s\S]*?<\/ref>/g, '');
+  const m = /\{\{\s*Infobox[ _]+football[ _]+biography/i.exec(text);
+  if (!m) return [];
+  let depth = 0, end = -1;
+  for (let i = m.index; i < text.length - 1; i++) {
+    const two = text.slice(i, i + 2);
+    if (two === '{{') { depth++; i++; } else if (two === '}}') { depth--; i++; if (!depth) { end = i + 1; break; } }
+  }
+  if (end < 0) return [];
+  const body = text.slice(m.index + 2, end - 2);
+  const parts = [];
+  let d = 0, cur = '';
+  for (let i = 0; i < body.length; i++) {
+    const two = body.slice(i, i + 2);
+    if (two === '{{' || two === '[[') { d++; cur += two; i++; continue; }
+    if (two === '}}' || two === ']]') { d--; cur += two; i++; continue; }
+    if (body[i] === '|' && !d) { parts.push(cur); cur = ''; continue; }
+    cur += body[i];
+  }
+  parts.push(cur);
+  const f = {};
+  for (const p of parts) {
+    const e = p.indexOf('=');
+    if (e > 0) f[p.slice(0, e).trim().toLowerCase()] = p.slice(e + 1).trim();
+  }
+  const count = v => {
+    const n = /\d+/.exec((v || '').replace(/\{\{0+\}\}/g, ''));
+    return n ? Number(n[0]) : null;
+  };
+  const out = [];
+  for (let n = 1; n <= 60; n++) {
+    const club = f['clubs' + n];
+    if (club === undefined) continue;
+    const link = /\[\[([^\]|#]+)/.exec(club);
+    const years = f['years' + n] || '';
+    const y = /(\d{4})(?:\s*[\u2013\u2014-]\s*(\d{4}))?/.exec(years);
+    out.push({
+      target: link ? pageTitle(link[1]) : '', apps: count(f['caps' + n]), goals: count(f['goals' + n]),
+      start: y ? Number(y[1]) : 0, end: y ? (y[2] ? Number(y[2]) : /[\u2013\u2014-]\s*$/.test(years) ? 0 : Number(y[1])) : 0
+    });
+  }
+  return out;
+}
+
 /* ─────────────── shaping ─────────────── */
 
 const NOW = 2026;
@@ -345,12 +466,13 @@ function classify(posLabels) {
   return '';
 }
 
-/* One player's spells at one team, folded together. Apps are only trusted
-   when every spell has them and every spell has ended: that is what 501
-   scores with, and a current player's total goes stale. */
+/* One player's spells at one team, folded together. Wikidata apps are only
+   trusted once every spell has ended, since a current player's total there
+   goes stale; Wikipedia infobox rows (wp) are current, so they count live. */
 function fold(rows) {
   const byStatement = new Map();
   for (const r of rows) if (!byStatement.has(r.st)) byStatement.set(r.st, r);
+  const fresh = rows.length > 0 && rows.every(r => r.wp);
   let apps = 0, goals = 0, appsKnown = true, goalsKnown = true, ended = true, allZero = true;
   let last = 0, first = 9999;
   for (const r of byStatement.values()) {
@@ -364,7 +486,44 @@ function fold(rows) {
     last = Math.max(last, e || s || 0);
     if (!r.end && s) last = Math.max(last, NOW);
   }
-  return { apps: appsKnown ? apps : null, goals: goalsKnown ? goals : null, ended, allZero, first, last };
+  return { apps: appsKnown ? apps : null, goals: goalsKnown ? goals : null, ended, fresh, allZero, first, last };
+}
+
+/* Fills Wikidata's gaps for every club from its Wikipedia players category:
+   members Wikidata lacks, and (on 501 clubs) spells with no usable numbers or
+   still running, are replaced by the infobox rows. Returns the players added. */
+async function supplement(teams, rowsBy) {
+  const wanted = [];
+  for (const t of teams.filter(x => !x.nt && !x.empty)) {
+    const { canonical, names } = await clubTitles(t);
+    const cat = await categoryMembers(t, canonical);
+    let need = 0;
+    for (const [q, pageid] of cat) {
+      const rows = rowsBy.get(q) && rowsBy.get(q).get(t.key);
+      const s = rows && fold(rows);
+      if (!rows || (BOARD_TEAMS.has(t.key) && (s.apps === null || !s.ended))) { wanted.push({ q, pageid, t, names }); need++; }
+    }
+    if (!cat.size) console.warn('  ! no Wikipedia category for ' + canonical);
+    else process.stdout.write('\r  ' + t.key + ': ' + cat.size + ' in category, ' + need + ' to read         ');
+  }
+  process.stdout.write('\n');
+  const text = await articles([...new Set(wanted.map(w => w.pageid))].sort((a, b) => a - b));
+  const added = new Set();
+  let filled = 0;
+  for (const w of wanted) {
+    const src = text.get(w.pageid);
+    const spells = src ? infobox(src).filter(s => w.names.has(s.target)) : [];
+    if (!spells.length) continue;
+    if (!rowsBy.has(w.q)) { rowsBy.set(w.q, new Map()); added.add(w.q); }
+    rowsBy.get(w.q).set(w.t.key, spells.map((s, n) => ({
+      st: 'wp-' + w.t.key + '-' + n, wp: true,
+      apps: s.apps === null ? undefined : String(s.apps), goals: s.goals === null ? undefined : String(s.goals),
+      start: s.start ? s.start + '-01-01' : undefined, end: s.end ? s.end + '-12-31' : undefined
+    })));
+    filled++;
+  }
+  console.log('  ' + filled + ' club spells filled from Wikipedia, ' + added.size + ' players new to the data');
+  return [...added].sort((a, b) => a - b);
 }
 
 async function main() {
@@ -405,6 +564,16 @@ async function main() {
     }
   }
 
+  /* Wikipedia supplement, looked up in its own batches for the same reason. */
+  const addedIds = await supplement(teams, rowsBy);
+  const newIds = addedIds.filter(q => !info.has(q));
+  if (newIds.length) {
+    for (const r of await playerInfo(newIds)) info.set(qid(r.p), r);
+    const unnamed = newIds.filter(q => info.has(q) && !info.get(q).label);
+    for (const [q, label] of await fallbackLabels(unnamed)) info.get(q).label = label;
+  }
+  ids.push(...addedIds.filter(q => !ids.includes(q)));
+
   /* Who goes in the searchable directory. Everyone active since 1965, plus
      undated players born since 1945, plus older names people still know. */
   const players = [];
@@ -432,7 +601,7 @@ async function main() {
       const s = p.spellsAt.get(t.key);
       if (!s || s.allZero) return;
       members.push(n);
-      if (BOARD_TEAMS.has(t.key) && s.ended && s.apps !== null && s.apps > 0) {
+      if (BOARD_TEAMS.has(t.key) && (s.ended || s.fresh) && s.apps !== null && s.apps > 0) {
         former.push(n); apps.push(s.apps); goals.push(s.goals === null ? -1 : s.goals);
       }
     });

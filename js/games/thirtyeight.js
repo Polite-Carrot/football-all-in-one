@@ -1,17 +1,29 @@
 /* 38-0 — spin a real Premier League club-season, take one player from that
- * squad into your 4-3-3, and repeat until all eleven shirts are filled. Then
- * play out a 38-game season against the league and chase the perfect record. */
+ * squad into your formation, and repeat until all eleven shirts are filled.
+ * Then play out a 38-game season against the league and chase the perfect
+ * record. Hard mode hides every rating until full time. */
 (function (g) {
   'use strict';
 
   var UI = g.UI, Games = g.Games, Daily = g.Daily;
 
-  var SLOTS = [
-    { k: 'GK', x: 50, y: 89 },
-    { k: 'RB', x: 86, y: 68 }, { k: 'CB', x: 63, y: 73 }, { k: 'CB', x: 37, y: 73 }, { k: 'LB', x: 14, y: 68 },
-    { k: 'CM', x: 74, y: 47 }, { k: 'CM', x: 50, y: 52 }, { k: 'CM', x: 26, y: 47 },
-    { k: 'RW', x: 82, y: 22 }, { k: 'ST', x: 50, y: 15 }, { k: 'LW', x: 18, y: 22 }
-  ];
+  var BACK4 = [{ k: 'GK', x: 50, y: 89 }, { k: 'RB', x: 86, y: 68 }, { k: 'CB', x: 63, y: 73 }, { k: 'CB', x: 37, y: 73 }, { k: 'LB', x: 14, y: 68 }];
+  var FORMATIONS = {
+    '4-3-3': BACK4.concat([
+      { k: 'CM', x: 74, y: 47 }, { k: 'CM', x: 50, y: 52 }, { k: 'CM', x: 26, y: 47 },
+      { k: 'RW', x: 82, y: 22 }, { k: 'ST', x: 50, y: 15 }, { k: 'LW', x: 18, y: 22 }]),
+    '4-4-2': BACK4.concat([
+      { k: 'RM', x: 86, y: 44 }, { k: 'CM', x: 61, y: 50 }, { k: 'CM', x: 39, y: 50 }, { k: 'LM', x: 14, y: 44 },
+      { k: 'ST', x: 62, y: 17 }, { k: 'ST', x: 38, y: 17 }]),
+    '4-2-3-1': BACK4.concat([
+      { k: 'DM', x: 62, y: 56 }, { k: 'DM', x: 38, y: 56 },
+      { k: 'RW', x: 83, y: 33 }, { k: 'AM', x: 50, y: 36 }, { k: 'LW', x: 17, y: 33 }, { k: 'ST', x: 50, y: 13 }]),
+    '3-5-2': [{ k: 'GK', x: 50, y: 89 }, { k: 'CB', x: 73, y: 72 }, { k: 'CB', x: 50, y: 75 }, { k: 'CB', x: 27, y: 72 },
+      { k: 'RWB', x: 88, y: 48 }, { k: 'CM', x: 66, y: 53 }, { k: 'CM', x: 34, y: 53 }, { k: 'LWB', x: 12, y: 48 }, { k: 'AM', x: 50, y: 37 },
+      { k: 'ST', x: 62, y: 16 }, { k: 'ST', x: 38, y: 16 }]
+  };
+  var FORMATION_NAMES = Object.keys(FORMATIONS);
+  var SETUP_KEY = 'footballaio.t38.v1';
 
   /* Rating lost when a player fills a slot: 0 in his own position, more the
      further from it. Missing = cannot play there at all. */
@@ -20,7 +32,13 @@
     RB: { RB: 0, LB: 4, CB: 6, DM: 8 },
     LB: { LB: 0, RB: 4, CB: 6, DM: 8 },
     CB: { CB: 0, DM: 4, RB: 6, LB: 6 },
+    DM: { DM: 0, CM: 1, CB: 4, AM: 6 },
     CM: { CM: 0, DM: 1, AM: 1, RW: 7, LW: 7 },
+    AM: { AM: 0, CM: 2, RW: 3, LW: 3, ST: 3 },
+    RM: { RW: 1, LW: 3, CM: 4, AM: 4, RB: 6 },
+    LM: { LW: 1, RW: 3, CM: 4, AM: 4, LB: 6 },
+    RWB: { RB: 1, RW: 3, LB: 4, LW: 5 },
+    LWB: { LB: 1, LW: 3, RB: 4, RW: 5 },
     RW: { RW: 0, LW: 3, AM: 4, ST: 5, CM: 8 },
     LW: { LW: 0, RW: 3, AM: 4, ST: 5, CM: 8 },
     ST: { ST: 0, AM: 4, RW: 5, LW: 5 }
@@ -78,6 +96,20 @@
     return parts.length > 1 && parts[parts.length - 1].length > 2 ? parts.slice(1).join(' ') : name;
   }
 
+  function loadSetup() {
+    var setup = { formation: '4-3-3', hard: false };
+    try {
+      var saved = JSON.parse(g.Store.read(SETUP_KEY) || 'null');
+      if (saved && FORMATIONS[saved.formation]) setup.formation = saved.formation;
+      if (saved && typeof saved.hard === 'boolean') setup.hard = saved.hard;
+    } catch (e) { /* defaults */ }
+    return setup;
+  }
+
+  function saveSetup(setup) {
+    try { g.Store.write(SETUP_KEY, JSON.stringify(setup)); } catch (e) { /* not kept */ }
+  }
+
   Games.register({
     id: 'thirtyeight',
     name: '38-0',
@@ -86,8 +118,9 @@
     tagline: 'Draft an XI. Go unbeaten.',
     icon: '<svg viewBox="0 0 24 24"><path d="M7.5 3.5h9v4.5a4.5 4.5 0 0 1-9 0z"/><path d="M7.5 5.5H4.5a3 3 0 0 0 3.2 3.4M16.5 5.5h3a3 3 0 0 1-3.2 3.4M12 12.5v3.5M8.5 20.5h7M9.8 16h4.4l.6 4.5H9.2z"/></svg>',
     rules: [
+      'Pick a formation, and hard mode if you want every rating hidden until full time.',
       'Spin to land on a real Premier League club and season.',
-      'Take one player from that squad into an open slot of your 4-3-3. Out of position costs rating.',
+      'Take one player from that squad into an open slot. Out of position costs rating.',
       'Eleven spins, eleven players, and one re-spin if you hate where you land.',
       'Then play all 38 games. Can your XI win them all?'
     ],
@@ -99,36 +132,54 @@
       var spinIndex = 0;
       var current = null;
       var respins = 1;
-      var xi = SLOTS.map(function () { return null; });
+      var setup = loadSetup();
+      var SLOTS = FORMATIONS[setup.formation];
+      var xi = [];
+      var spots = [];
       var over = false;
       var busy = false;
 
       var root = UI.el('div', 't38', ctx.root);
       var pitch = UI.el('div', 't38__pitch', root);
       UI.el('div', 't38__lines', pitch);
-      var spots = SLOTS.map(function (s) {
-        var b = UI.el('div', 'spot', pitch);
-        b.style.left = s.x + '%';
-        b.style.top = s.y + '%';
-        UI.el('span', 'spot__pos', b, s.k);
-        UI.el('span', 'spot__name', b, '');
-        UI.el('b', 'spot__rating', b, '');
-        return b;
-      });
+      var spotLayer = UI.el('div', 't38__spots', pitch);
       var ratingEl = UI.el('div', 't38__rating', pitch);
       UI.el('span', null, ratingEl, 'XI');
       var ratingNum = UI.el('b', null, ratingEl, '\u2013');
 
       var panel = UI.el('div', 't38__panel', root);
+      var setupEl = UI.el('div', 'card t38__setup', panel);
+      UI.el('span', 'kicker', setupEl, 'Formation');
+      var formGrid = UI.el('div', 'vs-seg t38__forms', setupEl);
+      var formBtns = FORMATION_NAMES.map(function (name) {
+        var b = UI.el('button', 'vs-seg__btn', formGrid, name);
+        b.type = 'button';
+        b.addEventListener('click', function () { setup.formation = name; g.Sfx.play('tap'); syncSetup(); });
+        return { el: b, name: name };
+      });
+      var hardRow = UI.el('div', 'settings-row settings-row--stack t38__hard', setupEl);
+      var hardText = UI.el('div', null, hardRow);
+      UI.el('b', null, hardText, 'Hard mode');
+      UI.el('p', 'settings-row__note', hardText, 'No ratings. Pick on what you know; the numbers come out at full time.');
+      var hardBtn = UI.el('button', 'btn', hardRow);
+      hardBtn.type = 'button';
+      hardBtn.setAttribute('aria-label', 'Hard mode');
+      hardBtn.addEventListener('click', function () { setup.hard = !setup.hard; g.Sfx.play('tap'); syncSetup(); });
+      var draftBtn = UI.el('button', 'btn btn--primary btn--wide', setupEl, 'Start the draft');
+      draftBtn.type = 'button';
+      draftBtn.addEventListener('click', beginDraft);
+
       var reel = UI.el('div', 'reel', panel);
       var reelClub = UI.el('b', 'reel__club', reel, 'Spin for your first player');
       var reelSeason = UI.el('span', 'reel__season', reel, '');
+      reel.hidden = true;
       var actions = UI.el('div', 't38__actions', panel);
       var spinBtn = UI.el('button', 'btn btn--primary btn--wide', actions, 'Spin');
       spinBtn.type = 'button';
       var respinBtn = UI.el('button', 'btn btn--ghost', actions, 'Re-spin (1)');
       respinBtn.type = 'button';
       respinBtn.hidden = true;
+      actions.hidden = true;
       var squad = UI.el('ol', 'squad', panel);
       var playBtn = UI.el('button', 'btn btn--gold btn--wide t38__play', panel, 'Play the season');
       playBtn.type = 'button';
@@ -139,7 +190,36 @@
       spinBtn.addEventListener('click', function () { spin(false); });
       respinBtn.addEventListener('click', function () { if (respins > 0) { respins--; spin(true); } });
       playBtn.addEventListener('click', runSeason);
-      ctx.setMeta('0/11');
+      syncSetup();
+
+      function syncSetup() {
+        formBtns.forEach(function (b) { b.el.setAttribute('aria-pressed', b.name === setup.formation ? 'true' : 'false'); });
+        hardBtn.textContent = setup.hard ? 'On' : 'Off';
+        hardBtn.setAttribute('aria-pressed', setup.hard ? 'true' : 'false');
+        SLOTS = FORMATIONS[setup.formation];
+        xi = SLOTS.map(function () { return null; });
+        UI.clear(spotLayer);
+        spots = SLOTS.map(function (s) {
+          var b = UI.el('div', 'spot', spotLayer);
+          b.style.left = s.x + '%';
+          b.style.top = s.y + '%';
+          UI.el('span', 'spot__pos', b, s.k);
+          UI.el('span', 'spot__name', b, '');
+          UI.el('b', 'spot__rating', b, '');
+          return b;
+        });
+        ratingNum.textContent = setup.hard ? '?' : '\u2013';
+        ctx.setMeta(setup.formation + (setup.hard ? ' \u00b7 Hard' : ''));
+      }
+
+      function beginDraft() {
+        saveSetup(setup);
+        panel.removeChild(setupEl);
+        reel.hidden = false;
+        actions.hidden = false;
+        g.Sfx.play('whistle');
+        ctx.setMeta('0/11');
+      }
 
       function filled() { return xi.filter(Boolean).length; }
 
@@ -196,7 +276,10 @@
 
       function renderSquad() {
         UI.clear(squad);
-        var players = current.p.slice().sort(function (a, b) { return ORDER.indexOf(a[1]) - ORDER.indexOf(b[1]) || b[2] - a[2]; });
+        /* Hard mode lists by name, since sorting by rating would give the ratings away. */
+        var players = current.p.slice().sort(function (a, b) {
+          return ORDER.indexOf(a[1]) - ORDER.indexOf(b[1]) || (setup.hard ? a[0].localeCompare(b[0]) : b[2] - a[2]);
+        });
         var any = false;
         players.forEach(function (p) {
           var fit = bestSlot(p[1]);
@@ -205,9 +288,9 @@
           UI.el('span', 'squad__name', row, p[0]);
           if (fit) {
             any = true;
-            UI.el('span', 'squad__fit', row, fit.cost ? SLOTS[fit.i].k + ' \u2212' + fit.cost : SLOTS[fit.i].k);
+            UI.el('span', 'squad__fit', row, fit.cost && !setup.hard ? SLOTS[fit.i].k + ' \u2212' + fit.cost : SLOTS[fit.i].k);
           }
-          UI.el('b', 'squad__rating', row, String(p[2]));
+          if (!setup.hard) UI.el('b', 'squad__rating', row, String(p[2]));
           if (!fit) return;
           row.tabIndex = 0;
           row.setAttribute('role', 'button');
@@ -228,23 +311,24 @@
         if (busy || over) return;
         var fit = bestSlot(p[1]);
         if (!fit) return;
+        ctx.moved();
         xi[fit.i] = { name: p[0], pos: p[1], base: p[2], eff: p[2] - fit.cost, club: current.club, season: current.season, c: current.c, c2: current.c2 };
         var spot = spots[fit.i];
         spot.classList.add('is-filled');
         spot.style.setProperty('--club', current.c);
         spot.style.setProperty('--trim', current.c2);
         spot.querySelector('.spot__name').textContent = surname(p[0]);
-        spot.querySelector('.spot__rating').textContent = String(p[2] - fit.cost);
+        if (!setup.hard) spot.querySelector('.spot__rating').textContent = String(p[2] - fit.cost);
         UI.pulse(spot, 'is-pop');
         g.Sfx.play('good');
         g.Sfx.haptic('light');
-        UI.countUp(ratingNum, Number(ratingNum.textContent) || 0, rating(), 400, function (v) { return v.toFixed(1); });
+        if (!setup.hard) UI.countUp(ratingNum, Number(ratingNum.textContent) || 0, rating(), 400, function (v) { return v.toFixed(1); });
         UI.clear(squad);
         respinBtn.hidden = true;
         ctx.setMeta(filled() + '/11');
         if (filled() === SLOTS.length) {
           reelClub.textContent = 'Your XI is ready';
-          reelSeason.textContent = 'Rating ' + rating().toFixed(1);
+          reelSeason.textContent = setup.hard ? setup.formation + ' \u00b7 rating hidden' : 'Rating ' + rating().toFixed(1);
           reel.style.removeProperty('--club');
           playBtn.hidden = false;
           return;
@@ -260,6 +344,10 @@
         panel.hidden = true;
         season.hidden = false;
         var r = rating();
+        if (setup.hard) {
+          xi.forEach(function (p, i) { spots[i].querySelector('.spot__rating').textContent = String(p.eff); });
+          UI.countUp(ratingNum, 0, r, 600, function (v) { return v.toFixed(1); });
+        }
         var sim = simulate(r, ctx.rand);
         var head = UI.el('div', 't38__record', season);
         var rec = UI.el('b', null, head, '0-0-0');
@@ -290,11 +378,12 @@
         var perfect = y.w === 38;
         if (perfect || sim.position === 1) { g.Sfx.play('crowd'); UI.celebrate('#2ee67a'); }
         var headline = perfect ? '38-0!' : y.l === 0 ? 'Invincibles' : sim.position === 1 ? 'Champions' : 'Finished ' + ordinal(sim.position);
+        var mode = setup.formation + (setup.hard ? ' \u00b7 Hard mode' : '');
         ctx.finish({
           score: y.p,
           display: y.w + '-' + y.d + '-' + y.l,
           headline: headline,
-          sub: y.p + ' pts \u00b7 ' + y.gf + ' scored, ' + y.ga + ' conceded \u00b7 XI rated ' + r.toFixed(1),
+          sub: y.p + ' pts \u00b7 ' + y.gf + ' scored, ' + y.ga + ' conceded \u00b7 XI rated ' + r.toFixed(1) + ' \u00b7 ' + mode,
           perfect: perfect,
           detail: function (parent) {
             var lineup = UI.el('ol', 't38__xi', parent);
@@ -314,8 +403,8 @@
             });
           },
           share: (perfect ? '\uD83C\uDFC6 38-0! ' : sim.position === 1 ? '\uD83C\uDFC6 ' : '') + y.w + '-' + y.d + '-' + y.l + ' \u00b7 ' + y.p + ' pts \u00b7 ' + headline +
-            '\nXI rated ' + r.toFixed(1),
-          track: { wins: y.w, points: y.p, position: sim.position }
+            '\nXI rated ' + r.toFixed(1) + ' \u00b7 ' + mode,
+          track: { wins: y.w, points: y.p, position: sim.position, formation: setup.formation, hard: setup.hard }
         });
       }
 

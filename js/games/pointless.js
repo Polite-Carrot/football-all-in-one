@@ -73,6 +73,7 @@
       }
 
       async function score(entry) {
+        ctx.moved();
         busy = true;
         var ok = !!(entry && inSet.has(entry.id));
         var pts = ok ? points(ranks.get(entry.id)) : WRONG;

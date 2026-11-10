@@ -125,6 +125,7 @@
       function choose(btn, right) {
         if (!answering) return;
         answering = false;
+        ctx.moved();
         timer.stop();
         var q = ladders[li].q[rung];
         Array.prototype.forEach.call(opts.children, function (b) {

@@ -209,7 +209,7 @@
     var text = UI.el('div', 'daily__text', daily);
     UI.el('span', 'kicker', text, 'Daily #' + Daily.number(now) + ' \u00b7 ' + now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }));
     UI.el('b', null, text, entry ? 'Today\u2019s done' : 'Today\u2019s challenge');
-    UI.el('span', null, text, entry ? 'Back tomorrow for a new one.' : 'Same for everyone, one go.');
+    UI.el('span', null, text, entry ? 'Back tomorrow for a new one.' : 'Same for everyone, one go. It counts once you answer.');
     if (entry) {
       UI.el('span', 'daily__score', daily, entry.d);
     } else {
@@ -253,6 +253,7 @@
     state.mode = mode;
     state.playing = true;
     state.finished = false;
+    state.moved = false;
     state.result = null;
 
     var screen = $('screen-game');
@@ -268,12 +269,6 @@
     UI.clear(root);
     $('game-scroll').scrollTop = 0;
 
-    if (mode === 'daily') {
-      /* A daily counts from the first move: leaving it, or closing the app, keeps it as played. */
-      (progress.daily[key] = progress.daily[key] || {})[id] = { s: null, d: 'Unfinished' };
-      saveProgress();
-    }
-
     var ctx = {
       root: root,
       mode: mode,
@@ -284,11 +279,22 @@
       choose: function (n) {
         if (mode === 'daily') return Daily.pick(n, id, now);
         if (!vs) return practiceChoice(id, n);
+        /* Remote: no shared phone to remember picks on, so they come from the shared seed. */
+        if (vs.remote) return Math.floor(vs.pick() * n);
         var i = vs.choiceAt++;
         if (vs.choices[i] === undefined) vs.choices[i] = practiceChoice(id, n);
         return vs.choices[i];
       },
       setMeta: function (text) { $('game-meta').textContent = text; },
+      /* A daily counts from the first answer: leaving after that, or closing the app, keeps it as played.
+         Leave before answering and it stays open. */
+      moved: function () {
+        if (state.moved || !state.playing) return;
+        state.moved = true;
+        if (mode !== 'daily') return;
+        (progress.daily[key] = progress.daily[key] || {})[id] = { s: null, d: 'Unfinished' };
+        saveProgress();
+      },
       finish: function (result) {
         if (vs) finishVsTurn(game, result);
         else finishRound(game, mode, key, result);
@@ -358,17 +364,19 @@
     }
     var daily = state.mode === 'daily';
     $('quit-title').textContent = 'Leave this round?';
-    $('quit-line').textContent = daily
-      ? 'Today\u2019s challenge is one go. If you leave now, it ends here and counts as played.'
-      : 'This practice round will be thrown away.';
-    $('quit-go').textContent = daily ? 'End it here' : 'Leave';
+    $('quit-line').textContent = daily && !state.moved
+      ? 'You haven\u2019t answered yet, so today\u2019s challenge stays open for later.'
+      : daily
+        ? 'Today\u2019s challenge is one go. If you leave now, it ends here and counts as played.'
+        : 'This practice round will be thrown away.';
+    $('quit-go').textContent = daily && state.moved ? 'End it here' : 'Leave';
     openModal('quit', 'quit-stay');
   }
 
   function confirmQuit() {
     $('quit').hidden = true;
     if (state.vs) { endMatch(); return; }
-    if (state.mode === 'daily' && state.round && state.round.quit) {
+    if (state.mode === 'daily' && state.moved && state.round && state.round.quit) {
       state.round.quit();
       return;
     }
@@ -442,12 +450,14 @@
   function vsGames() { return Games.list.filter(function (g) { return g.id !== 'thirtyeight'; }); }
 
   function loadVsSetup() {
-    var setup = { names: ['', ''], game: 'mix', rounds: 3 };
+    var setup = { names: ['', ''], game: 'mix', rounds: 3, where: 'local', me: '' };
     try {
       var saved = JSON.parse(window.Store.read(VS_KEY) || 'null');
       if (saved && Array.isArray(saved.names)) setup.names = [cleanName(saved.names[0]), cleanName(saved.names[1])];
       if (saved && (saved.game === 'mix' || vsGames().some(function (g) { return g.id === saved.game; }))) setup.game = saved.game;
       if (saved && VS_ROUNDS.indexOf(saved.rounds) >= 0) setup.rounds = saved.rounds;
+      if (saved && (saved.where === 'local' || saved.where === 'remote')) setup.where = saved.where;
+      if (saved) setup.me = cleanName(saved.me);
     } catch (e) { /* first visit, or unreadable: defaults */ }
     return setup;
   }
@@ -473,14 +483,30 @@
     UI.el('b', null, badge, 'VS');
     UI.el('i', null, badge);
     UI.el('h2', 'lobby__name', hero, 'Versus');
-    UI.el('p', 'lobby__tag', hero, 'One phone, two players, the same questions.');
+    var remote = vsSetup.where === 'remote';
+    UI.el('p', 'lobby__tag', hero, remote ? 'Send your mate a code. Same questions, wherever they are.' : 'One phone, two players, the same questions.');
+
+    var whereSeg = UI.el('div', 'vs-seg vs-where', root);
+    [['local', 'Same phone'], ['remote', 'Play by code']].forEach(function (w) {
+      var b = UI.el('button', 'vs-seg__btn', whereSeg, w[1]);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', vsSetup.where === w[0] ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        if (vsSetup.where === w[0]) return;
+        keepNames();
+        vsSetup.where = w[0];
+        window.Store.write(VS_KEY, JSON.stringify(vsSetup));
+        Sfx.play('tap');
+        renderVersusSetup();
+      });
+    });
 
     var players = UI.el('div', 'card vs-players', root);
-    UI.el('span', 'kicker vs-label', players, 'Players');
-    var inputs = [0, 1].map(function (p) {
+    UI.el('span', 'kicker vs-label', players, remote ? 'Your name' : 'Players');
+    function nameInput(p, value, label, placeholder) {
       var row = UI.el('label', 'vs-player', players);
       row.style.setProperty('--p', VS_COLORS[p]);
-      UI.el('span', 'vs-player__kit', row, p ? 'Away' : 'Home');
+      UI.el('span', 'vs-player__kit', row, label);
       var input = UI.el('input', 'vs-player__input', row);
       input.type = 'text';
       input.maxLength = 14;
@@ -488,13 +514,20 @@
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'words');
       input.setAttribute('enterkeyhint', 'done');
-      input.placeholder = 'Player ' + (p + 1);
-      input.value = vsSetup.names[p];
+      input.placeholder = placeholder;
+      input.value = value;
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
       });
       return input;
-    });
+    }
+    var inputs = remote
+      ? [nameInput(0, vsSetup.me, 'You', 'Your name')]
+      : [0, 1].map(function (p) { return nameInput(p, vsSetup.names[p], p ? 'Away' : 'Home', 'Player ' + (p + 1)); });
+    function keepNames() {
+      if (remote) vsSetup.me = cleanName(inputs[0].value);
+      else vsSetup.names = inputs.map(function (i) { return cleanName(i.value); });
+    }
 
     var pick = UI.el('div', 'card', root);
     UI.el('span', 'kicker vs-label', pick, 'Game');
@@ -520,23 +553,49 @@
     });
     var note = UI.el('p', 'vs-note', rounds, '');
 
-    var kick = UI.el('button', 'btn btn--primary btn--wide', root, 'Kick off');
+    var kick = UI.el('button', 'btn btn--primary btn--wide', root, remote ? 'Create a challenge' : 'Kick off');
     kick.type = 'button';
     kick.addEventListener('click', function () {
-      vsSetup.names = inputs.map(function (i) { return cleanName(i.value); });
+      keepNames();
       window.Store.write(VS_KEY, JSON.stringify(vsSetup));
-      startMatch();
+      if (remote) startRemoteHost();
+      else startMatch();
     });
+
+    if (remote) {
+      var got = UI.el('div', 'card vs-code-in', root);
+      UI.el('span', 'kicker vs-label', got, 'Got a code?');
+      UI.el('p', 'vs-note', got, 'Paste a challenge from a mate to play it, or their reply to see who won.');
+      var field = UI.el('textarea', 'vs-code-in__field', got);
+      field.rows = 3;
+      field.spellcheck = false;
+      field.autocomplete = 'off';
+      field.setAttribute('autocapitalize', 'off');
+      field.placeholder = 'Paste the code or the whole message here';
+      field.setAttribute('aria-label', 'Challenge or reply code');
+      var open = UI.el('button', 'btn btn--gold btn--wide', got, 'Play it');
+      open.type = 'button';
+      open.addEventListener('click', function () {
+        keepNames();
+        window.Store.write(VS_KEY, JSON.stringify(vsSetup));
+        openCode(field.value);
+      });
+    }
 
     var rules = UI.el('div', 'card rules', root);
     UI.el('h3', null, rules, 'How it works');
     var ol = UI.el('ol', null, rules);
-    [
+    (remote ? [
+      'Pick a game and rounds, then play them all. You get a code at the end.',
+      'Send the code to your mate however you like. They paste it here and play the exact same questions.',
+      'They see who won straight away and get a reply code to send back to you.',
+      'Paste their reply here to see the result. Most rounds wins.'
+    ] : [
       'Each round you both play the same game, with the same questions.',
       'When it says pass the phone, pass it, and don\u2019t watch your mate play.',
       'Scores stay hidden until you\u2019ve both played. Better score wins the round.',
       'Most rounds wins the match. Who goes first swaps every round.'
-    ].forEach(function (r) { UI.el('li', null, ol, r); });
+    ]).forEach(function (r) { UI.el('li', null, ol, r); });
 
     function sync() {
       chips.forEach(function (c) { c.el.setAttribute('aria-pressed', c.id === vsSetup.game ? 'true' : 'false'); });
@@ -565,12 +624,13 @@
 
   function newVsRound() {
     var vs = state.vs;
-    vs.seed = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    vs.seed = vs.remote ? vs.base + ':' + vs.round : Math.random().toString(36).slice(2) + Date.now().toString(36);
     vs.choices = [];
     vs.choiceAt = 0;
     vs.results = [null, null];
     vs.turn = 0;
-    vs.first = vs.round % 2;
+    /* Remote: each phone has one player, the challenger blue and the friend red. */
+    vs.first = vs.remote ? (vs.remote === 'host' ? 0 : 1) : vs.round % 2;
   }
 
   function vsPlayer() { return (state.vs.first + state.vs.turn) % 2; }
@@ -597,6 +657,19 @@
     box.style.setProperty('--g', game.color);
     $('handoff-kicker').textContent = (vs.games.length > 1 ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
     renderTally($('handoff-tally'));
+    if (vs.remote) {
+      $('handoff-tally').hidden = vs.remote === 'host' || vs.games.length < 2;
+      $('handoff-pass').textContent = vs.round === 0 ? 'First up' : 'Next up';
+      $('handoff-name').textContent = vs.names[p];
+      $('handoff-note').textContent = vs.remote === 'host'
+        ? vs.names[other] + ' will get exactly the same questions from your code.'
+        : (vs.dataNote || 'Same questions ' + vs.names[other] + ' had. Their score shows when you finish.');
+      $('handoff-go').textContent = 'Kick off';
+      box.hidden = false;
+      Sfx.haptic('medium');
+      try { $('handoff-go').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
+      return;
+    }
     $('handoff-pass').textContent = vs.turn === 0 && vs.round === 0 ? 'First up' : 'Pass the phone to';
     $('handoff-name').textContent = vs.names[p];
     $('handoff-note').textContent = vs.turn === 0
@@ -613,6 +686,7 @@
     if (!vs) return;
     $('handoff').hidden = true;
     vs.choiceAt = 0;
+    if (vs.remote) vs.pick = Daily.rng(vs.seed + ':pick');
     Sfx.play('whistle');
     startRound(vs.games[vs.round], 'versus');
   }
@@ -624,6 +698,7 @@
     state.playing = false;
     vs.results[vsPlayer()] = result;
     track('round_complete', { game: game.id, mode: 'versus', score: typeof result.score === 'number' ? result.score : -1, perfect: !!result.perfect });
+    if (vs.remote) { finishRemoteTurn(vs, game, result); return; }
     setTimeout(function () {
       if (state.vs !== vs) return;
       leaveRound();
@@ -725,7 +800,9 @@
     });
 
     $('vs-next').textContent = vs.over ? 'Done' : 'Next round';
-    $('vs-alt').textContent = vs.over ? 'Rematch' : 'End match';
+    $('vs-share').hidden = false;
+    $('vs-alt').textContent = vs.over ? (vs.remote === 'guest' ? 'Send result' : 'Rematch') : 'End match';
+    if (vs.remote === 'guest' && vs.over) codeBox(detail, vs.reply, 'Send this back to ' + vs.names[0] + ' so they see the result too.');
     box.hidden = false;
     box.querySelector('.sheet').scrollTop = 0;
     var winner = vs.over ? (multi ? champ : last.winner) : -1;
@@ -738,6 +815,7 @@
     var vs = state.vs;
     if (!vs) return;
     $('vs-result').hidden = true;
+    if (vs.stage === 'code') { endMatch(); return; }
     await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
     if (state.vs !== vs) return;
     if (vs.over) { endMatch(); return; }
@@ -749,10 +827,14 @@
   async function vsAlt() {
     var vs = state.vs;
     if (!vs) return;
+    if (vs.stage === 'code') { shareCode(vs.code, challengeText(vs)); return; }
+    if (vs.remote === 'guest' && vs.over) { shareCode(vs.reply, replyText(vs)); return; }
     if (!vs.over) { endMatch(); return; }
     $('vs-result').hidden = true;
     await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
-    if (state.vs === vs) startMatch();
+    if (state.vs !== vs) return;
+    if (vs.remote) { closeVersus(); startRemoteHost(); }
+    else startMatch();
   }
 
   function vsShare() {
@@ -783,6 +865,259 @@
     else renderLobby();
   }
 
+  /* ───────── versus: play by code ─────────
+     No server: a challenge code carries the games, the shared seed and the
+     challenger's scores; the reply code adds the friend's. Both phones build
+     the same questions from the seed. Codes are untrusted input, so every
+     field is checked before use and only ever shown as text. */
+
+  var REMOTE_KEY = 'footballaio.remote.v1';
+  var CODE_PREFIX = 'FAIO1.';
+
+  function remoteStore() {
+    try {
+      var s = JSON.parse(window.Store.read(REMOTE_KEY) || 'null');
+      if (s && Array.isArray(s.created) && s.played && typeof s.played === 'object') return s;
+    } catch (e) { /* unreadable: start again */ }
+    return { created: [], played: {} };
+  }
+
+  function saveRemote(s) {
+    s.created = s.created.slice(-40);
+    var keys = Object.keys(s.played);
+    keys.slice(0, Math.max(0, keys.length - 40)).forEach(function (k) { delete s.played[k]; });
+    window.Store.write(REMOTE_KEY, JSON.stringify(s));
+  }
+
+  function encodeCode(obj) {
+    var bytes = new TextEncoder().encode(JSON.stringify(obj));
+    var bin = '';
+    bytes.forEach(function (b) { bin += String.fromCharCode(b); });
+    return CODE_PREFIX + btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function decodeCode(text) {
+    var m = /FAIO1\.([A-Za-z0-9_-]{8,6000})/.exec(String(text || '').replace(/\s+/g, ''));
+    if (!m) return null;
+    try {
+      var bin = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return checkCode(JSON.parse(new TextDecoder().decode(bytes)));
+    } catch (e) { return null; }
+  }
+
+  function cleanShown(v) { return String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 24); }
+
+  function checkResults(list, max) {
+    if (!Array.isArray(list) || list.length > max) return null;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (!Array.isArray(r)) return null;
+      var v = r[0] === null ? null : Number(r[0]);
+      if (v !== null && !isFinite(v)) return null;
+      out.push([v, cleanShown(r[1]) || '\u2013', cleanShown(r[2])]);
+    }
+    return out;
+  }
+
+  function checkCode(o) {
+    if (!o || o.v !== 1 || (o.t !== 'c' && o.t !== 'r')) return null;
+    var ids = vsGames().map(function (g) { return g.id; });
+    if (!Array.isArray(o.g) || !o.g.length || o.g.length > 5 || !o.g.every(function (id) { return ids.indexOf(id) >= 0; })) return null;
+    if (typeof o.s !== 'string' || !/^[a-z0-9]{6,40}$/i.test(o.s)) return null;
+    if (!Array.isArray(o.n) || o.n.length !== (o.t === 'c' ? 1 : 2)) return null;
+    var names = o.n.map(function (n) { return cleanName(n) || 'Your mate'; });
+    var host = checkResults(o.r && o.r[0], o.g.length);
+    var guest = o.t === 'r' ? checkResults(o.r && o.r[1], o.g.length) : [];
+    if (!host || host.length !== o.g.length || !guest || (o.t === 'r' && !guest.length)) return null;
+    return { t: o.t, g: o.g.slice(), s: o.s, b: typeof o.b === 'string' ? o.b.slice(0, 30) : '', n: names, r: [host, guest] };
+  }
+
+  function packResult(game, r) {
+    var v = vsValue(game, r);
+    return [isFinite(v) ? v : null, cleanShown(vsShown(r)), cleanShown(r.headline)];
+  }
+
+  /* A result from the other phone: enough to rank and show, no answers. */
+  function unpackResult(p) {
+    return { vs: p[0] === null ? undefined : p[0], display: p[1], vsDisplay: p[1], headline: p[2] };
+  }
+
+  function remoteGamesText(games) {
+    var unique = games.filter(function (id, i) { return games.indexOf(id) === i; });
+    var names = unique.map(function (id) { return Games.byId[id].name; });
+    return UI.plural(games.length, 'round') + ' \u00b7 ' + (unique.length > 2 ? 'Mix it up' : names.join(', '));
+  }
+
+  function challengeText(vs) {
+    return vs.names[0] + ' has challenged you on ' + APP_NAME + '! ' + remoteGamesText(vs.games) + '.\n' +
+      'Open Versus \u2192 Play by code and paste this message:\n' + vs.code;
+  }
+
+  function replyText(vs) {
+    var line = vs.wins[0] === vs.wins[1] ? 'It\u2019s a draw' : vs.names[vs.wins[1] > vs.wins[0] ? 1 : 0] + ' wins';
+    return vs.names[1] + ' played your ' + APP_NAME + ' challenge. ' + line + ' ' + Math.max(vs.wins[0], vs.wins[1]) + '\u2013' + Math.min(vs.wins[0], vs.wins[1]) + '.\n' +
+      'Open Versus \u2192 Play by code and paste this message to see it:\n' + vs.reply;
+  }
+
+  function shareCode(code, text) {
+    UI.share(text).then(function (how) { track('share', { game: 'versus_code', how: how }); });
+  }
+
+  function codeBox(parent, code, note) {
+    var box = UI.el('div', 'vs-code', parent);
+    UI.el('p', 'vs-code__note', box, note);
+    var text = UI.el('code', 'vs-code__text', box, code);
+    text.tabIndex = 0;
+    var copy = UI.el('button', 'btn btn--ghost btn--small', box, 'Copy code');
+    copy.type = 'button';
+    copy.addEventListener('click', function () {
+      Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(code))
+        .then(function () { UI.toast('Code copied'); })
+        .catch(function () { UI.toast('Select the code and copy it'); });
+    });
+  }
+
+  function remoteVs(role, games, base, names) {
+    return { remote: role, names: names, games: games, base: base, round: 0, wins: [0, 0], log: [], hostRes: [], guestRes: [], over: false };
+  }
+
+  function startRemoteHost() {
+    var me = vsSetup.me || 'Player 1';
+    var games = vsSetup.game === 'mix'
+      ? Daily.shuffle(vsGames().map(function (g) { return g.id; }), Math.random).slice(0, vsSetup.rounds)
+      : new Array(vsSetup.rounds).fill(vsSetup.game);
+    var base = (Math.random().toString(36).slice(2, 10) + Date.now().toString(36)).slice(0, 16);
+    state.vs = remoteVs('host', games, base, [me, 'Your mate']);
+    newVsRound();
+    Sfx.unlock();
+    Sfx.play('whistle');
+    track('versus_start', { game: vsSetup.game, rounds: vsSetup.rounds, remote: 'host' });
+    showHandoff();
+  }
+
+  function startRemoteGuest(code) {
+    var me = vsSetup.me || 'Player 2';
+    var names = [code.n[0], me.toLowerCase() === code.n[0].toLowerCase() ? me + ' 2' : me];
+    var vs = remoteVs('guest', code.g, code.s, names);
+    vs.hostRes = code.r[0];
+    vs.built = code.b;
+    if (code.b && window.Footy.built && code.b !== window.Footy.built) {
+      vs.dataNote = 'Heads up: your football data is a different version from ' + names[0] + '\u2019s, so a question or two may differ.';
+    }
+    state.vs = vs;
+    newVsRound();
+    Sfx.unlock();
+    Sfx.play('whistle');
+    track('versus_start', { game: code.g.length > 1 ? 'mix' : code.g[0], rounds: code.g.length, remote: 'guest' });
+    showHandoff();
+  }
+
+  function openCode(text) {
+    var code = decodeCode(text);
+    if (!code) { UI.toast('That code doesn\u2019t look right \u2014 paste the whole thing'); return; }
+    var store = remoteStore();
+    if (code.t === 'r') { showReply(code); return; }
+    if (store.created.indexOf(code.s) >= 0) { UI.toast('That\u2019s your own challenge \u2014 send it to a mate'); return; }
+    var played = store.played[code.s] && decodeCode(store.played[code.s]);
+    if (played) { UI.toast('You\u2019ve already played this one'); showReply(played, true); return; }
+    applyPendingData();
+    startRemoteGuest(code);
+  }
+
+  /* Host side between rounds, and the code at the end. */
+  function finishRemoteTurn(vs, game, result) {
+    var p = vsPlayer();
+    if (vs.remote === 'host') {
+      vs.hostRes.push(packResult(game, result));
+      vs.log.push({ game: game, results: [result, null], winner: -1 });
+      if (window.Ads) window.Ads.noteLevelComplete();
+    }
+    setTimeout(async function () {
+      if (state.vs !== vs) return;
+      leaveRound();
+      if (vs.remote === 'guest') {
+        vs.results = [unpackResult(vs.hostRes[vs.round]), vs.results[p]];
+        vs.guestRes.push(packResult(game, vs.results[1]));
+        settleVsRound(game);
+        if (vs.over) {
+          vs.reply = encodeCode({ v: 1, t: 'r', g: vs.games, s: vs.base, b: vs.built || '', n: vs.names, r: [vs.hostRes, vs.guestRes] });
+          var store = remoteStore();
+          store.played[vs.base] = vs.reply;
+          saveRemote(store);
+        }
+        showVsResult();
+        return;
+      }
+      if (vs.round + 1 < vs.games.length) {
+        vs.round += 1;
+        newVsRound();
+        UI.clear($('game-root'));
+        $('game-meta').textContent = '';
+        await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
+        if (state.vs === vs) showHandoff();
+        return;
+      }
+      vs.code = encodeCode({ v: 1, t: 'c', g: vs.games, s: vs.base, b: window.Footy.built || '', n: [vs.names[0]], r: [vs.hostRes] });
+      var mine = remoteStore();
+      mine.created.push(vs.base);
+      saveRemote(mine);
+      track('versus_code', { rounds: vs.games.length });
+      showChallengeCode(vs);
+    }, UI.reduced ? 300 : 1100);
+  }
+
+  function showChallengeCode(vs) {
+    vs.stage = 'code';
+    var box = $('vs-result');
+    box.style.setProperty('--g', MIX.color);
+    $('vs-kicker').textContent = 'Challenge ready \u00b7 ' + remoteGamesText(vs.games);
+    $('vs-headline').textContent = 'Now send it to your mate';
+    UI.clear($('vs-board'));
+    $('vs-sub').textContent = 'Your scores stay hidden from them until they\u2019ve played.';
+    var detail = $('vs-detail');
+    UI.clear(detail);
+    var log = UI.el('ol', 'vs-log', detail);
+    vs.log.forEach(function (e) {
+      var li = UI.el('li', null, log);
+      li.style.setProperty('--g', e.game.color);
+      UI.el('span', 'vs-log__game', li, e.game.name);
+      var s = UI.el('span', 'vs-log__score is-win', li, vsShown(e.results[0]));
+      s.style.setProperty('--p', VS_COLORS[0]);
+    });
+    codeBox(detail, vs.code, 'They paste this in Versus \u2192 Play by code. Their reply code shows you who won.');
+    $('vs-next').textContent = 'Done';
+    $('vs-alt').textContent = 'Send code';
+    $('vs-share').hidden = true;
+    box.hidden = false;
+    box.querySelector('.sheet').scrollTop = 0;
+    Sfx.play('whistle');
+    try { $('vs-alt').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
+  }
+
+  /* The whole match from a reply code (or a challenge this phone already answered). */
+  function showReply(code, asGuest) {
+    var games = code.g.map(function (id) { return Games.byId[id]; });
+    var vs = remoteVs(asGuest ? 'guest' : 'final', code.g, code.s, code.n);
+    var played = code.r[1].length;
+    for (var i = 0; i < played; i++) {
+      var results = [unpackResult(code.r[0][i]), unpackResult(code.r[1][i])];
+      var a = vsValue(games[i], results[0]), b = vsValue(games[i], results[1]);
+      var winner = a > b ? 0 : b > a ? 1 : -1;
+      if (winner >= 0) vs.wins[winner] += 1;
+      vs.log.push({ game: games[i], results: results, winner: winner });
+    }
+    vs.round = played - 1;
+    vs.left = code.g.length - played;
+    vs.over = true;
+    if (asGuest) vs.reply = encodeCode({ v: 1, t: 'r', g: code.g, s: code.s, b: code.b, n: code.n, r: code.r });
+    state.vs = vs;
+    track('versus_reply', { rounds: played });
+    showVsResult();
+  }
+
   /* ───────── fresh data ───────── */
 
   var pendingData = null;
@@ -800,9 +1135,9 @@
     applyPendingData();
   }
 
-  /* Only between rounds, and in versus only before a round's first turn, so both players share one build. */
+  /* Only between rounds, and never mid-match in versus, so both players share one build. */
   function applyPendingData() {
-    if (!pendingData || state.playing || (state.vs && state.vs.turn > 0)) return;
+    if (!pendingData || state.playing || (state.vs && (state.vs.remote || state.vs.turn > 0))) return;
     window.DataFeed.install(pendingData);
     pendingData = null;
     renderDataBuilt();

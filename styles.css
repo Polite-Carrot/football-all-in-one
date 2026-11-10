@@ -521,6 +521,7 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .slot.is-hit .slot__n { background: var(--g); color: #08140a; }
 .slot.is-hit .slot__label { color: rgba(255, 255, 255, .7); }
 .slot.is-miss { opacity: .72; }
+.slot.is-hint .slot__name { color: var(--ink-soft); letter-spacing: .12em; }
 .slot.is-miss .slot__name { color: #ff9aa5; }
 .slot--killer { box-shadow: inset 0 0 0 2px rgba(255, 77, 94, .55); background: rgba(255, 77, 94, .1); }
 .slot--killer .slot__n { background: var(--red); color: #fff; }
@@ -538,6 +539,8 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .tn__tally, .tx__tally { display: flex; align-items: baseline; gap: 2px; font: 700 18px/1 var(--display); color: var(--ink-soft); }
 .tn__tally b, .tx__tally b { font: italic 800 38px/1 var(--display); color: var(--g); }
 .tn__giveup { justify-self: center; }
+.tn__tools { display: flex; justify-content: center; gap: 10px; }
+.tn__tools[hidden] { display: none; }
 
 /* ───────── 501 ───────── */
 .d5__top { display: flex; align-items: stretch; gap: 10px; }
@@ -572,7 +575,8 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
     linear-gradient(rgba(255, 255, 255, .03), rgba(255, 255, 255, .03)),
     #1b2420;
   box-shadow: inset 0 0 0 6px #3a2a1a, inset 0 0 0 7px #5a4128, inset 0 0 40px rgba(0, 0, 0, .5);
-  font-family: "Chalkboard SE", "Comic Neue", var(--display);
+  font: italic 800 17px/1.2 var(--display);
+  letter-spacing: .02em;
   max-height: 300px;
   overflow-y: auto;
 }
@@ -822,6 +826,7 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
   font: 800 13px/1 var(--display);
   color: rgba(255, 255, 255, .8);
   letter-spacing: .04em;
+  white-space: nowrap;
 }
 .spot__name { max-width: 74px; font: 700 13px/1 var(--display); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0, 0, 0, .8); }
 .spot__rating { position: absolute; top: -4px; right: 8px; min-width: 22px; padding: 2px 4px; border-radius: 6px; background: var(--g); color: #06210f; font: 800 12px/1 var(--display); text-align: center; }
@@ -832,6 +837,12 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .t38__rating span { font: 700 10px/1 var(--body); letter-spacing: .16em; color: var(--ink-soft); }
 .t38__rating b { font: 800 22px/1 var(--display); color: var(--g); }
 .t38__panel { display: grid; gap: 10px; }
+.t38__spots { position: absolute; inset: 0; z-index: 2; }
+.t38__setup { display: grid; gap: 10px; }
+.t38__setup .kicker { margin: 0; }
+.t38__forms { grid-template-columns: repeat(4, 1fr); }
+.t38__hard { background: rgba(0, 0, 0, .2); }
+.reel[hidden], .t38__actions[hidden] { display: none; }
 .reel {
   position: relative;
   display: grid;
@@ -873,7 +884,8 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .pos { flex: none; min-width: 36px; padding: 5px 6px; border-radius: 7px; font: 800 13px/1 var(--display); letter-spacing: .04em; text-align: center; color: #07140b; background: #9fd9ff; }
 .pos--GK { background: #ffd166; }
 .pos--RB, .pos--CB, .pos--LB { background: #8fd3ff; }
-.pos--DM, .pos--CM, .pos--AM { background: #9ff0b6; }
+.pos--DM, .pos--CM, .pos--AM, .pos--RM, .pos--LM { background: #9ff0b6; }
+.pos--RWB, .pos--LWB { background: #8fd3ff; }
 .pos--RW, .pos--LW, .pos--ST { background: #ffa3ae; }
 .t38__play { margin-top: 2px; }
 .t38__season { display: grid; gap: 12px; }
@@ -1185,6 +1197,27 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 }
 .vs-seg__btn[aria-pressed="true"] { background: var(--lime); color: var(--lime-ink); }
 .vs-note { margin: 10px 0 0; color: var(--ink-soft); font-size: 14px; }
+.vs-where { grid-template-columns: repeat(2, 1fr); }
+.vs-code-in { display: grid; gap: 10px; }
+.vs-code-in .vs-label, .vs-code-in .vs-note { margin: 0; }
+.vs-code-in__field {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+  font: 500 14px/1.35 var(--body);
+  resize: vertical;
+  outline: none;
+}
+.vs-code-in__field:focus { box-shadow: inset 0 0 0 2px var(--gold); }
+.vs-code-in__field::placeholder { color: var(--ink-faint); }
+.vs-code { display: grid; justify-items: center; gap: 10px; margin-top: 16px; padding: 14px; border-radius: 16px; background: rgba(0, 0, 0, .28); box-shadow: inset 0 0 0 1px var(--line); text-align: center; }
+.vs-code__note { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.35; }
+.vs-code__text { display: block; width: 100%; max-height: 96px; overflow-y: auto; padding: 10px; border-radius: 10px; background: var(--card); font: 500 12px/1.4 ui-monospace, Menlo, monospace; color: var(--ink); word-break: break-all; user-select: all; -webkit-user-select: all; text-align: left; }
 .versus-cta:focus-visible, .vs-game:focus-visible, .vs-seg__btn:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
 
 body.versus #game-mode { color: var(--p); }

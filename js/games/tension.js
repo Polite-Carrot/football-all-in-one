@@ -93,12 +93,13 @@
           ring.set(left, all);
           if (whole) ctx.setMeta(Math.ceil(left) + 's');
           if (whole && left <= 10 && left > 0) g.Sfx.play('tick');
-        }, function () { end('time'); });
+        }, function () { ctx.moved(); end('time'); });
         timer.start();
       });
 
       function answer(entry) {
         if (!live) return;
+        ctx.moved();
         var i = Games.matchAnswer(def, entry);
         if (i >= 0 && found.has(i)) { UI.toast('Already got him'); return; }
         if (i >= 0 && killers.indexOf(i) >= 0) {

@@ -51,7 +51,14 @@
         if (!s) return;
         var answer = def.a[i][1];
         s.name.textContent = text || (def.type === 'club' ? g.Footy.prettyClub(answer) : answer);
+        s.li.classList.remove('is-hint');
         s.li.classList.add('is-open', 'is-' + how);
+      },
+      hint: function (i, text) {
+        var s = slots[i];
+        if (!s || def.unranked) return;
+        s.name.textContent = text;
+        s.li.classList.add('is-hint');
       }
     };
   }
