@@ -553,43 +553,31 @@
     });
     var note = UI.el('p', 'vs-note', rounds, '');
 
-    var kick = UI.el('button', 'btn btn--primary btn--wide', root, remote ? 'Create a challenge' : 'Kick off');
+    var kick = UI.el('button', 'btn btn--primary btn--wide', root, remote ? 'Create a match code' : 'Kick off');
     kick.type = 'button';
     kick.addEventListener('click', function () {
       keepNames();
       window.Store.write(VS_KEY, JSON.stringify(vsSetup));
-      if (remote) startRemoteHost();
+      if (remote) createMatch();
       else startMatch();
     });
 
     if (remote) {
-      var got = UI.el('div', 'card vs-code-in', root);
-      UI.el('span', 'kicker vs-label', got, 'Got a code?');
-      UI.el('p', 'vs-note', got, 'Paste a challenge from a mate to play it, or their reply to see who won.');
-      var field = UI.el('textarea', 'vs-code-in__field', got);
-      field.rows = 3;
-      field.spellcheck = false;
-      field.autocomplete = 'off';
-      field.setAttribute('autocapitalize', 'off');
-      field.placeholder = 'Paste the code or the whole message here';
-      field.setAttribute('aria-label', 'Challenge or reply code');
-      var open = UI.el('button', 'btn btn--gold btn--wide', got, 'Play it');
-      open.type = 'button';
-      open.addEventListener('click', function () {
-        keepNames();
-        window.Store.write(VS_KEY, JSON.stringify(vsSetup));
-        openCode(field.value);
-      });
+      var got = UI.el('div', 'card', root);
+      var paste = pasteBox(got, 'Got a code?');
+      UI.el('p', 'vs-note', got, 'Paste a match code from your mate to play it, or their result code to see who won.');
+      paste.go.textContent = 'Play it';
+      paste.go.addEventListener('click', function () { keepNames(); window.Store.write(VS_KEY, JSON.stringify(vsSetup)); }, true);
     }
 
     var rules = UI.el('div', 'card rules', root);
     UI.el('h3', null, rules, 'How it works');
     var ol = UI.el('ol', null, rules);
     (remote ? [
-      'Pick a game and rounds, then play them all. You get a code at the end.',
-      'Send the code to your mate however you like. They paste it here and play the exact same questions.',
-      'They see who won straight away and get a reply code to send back to you.',
-      'Paste their reply here to see the result. Most rounds wins.'
+      'Pick a game and rounds, then send your mate the match code.',
+      'You both play the same questions on your own phones, at the same time if you like.',
+      'When you finish you each get a result code. Swap them.',
+      'Paste your mate\u2019s result code to see who won. Most rounds wins.'
     ] : [
       'Each round you both play the same game, with the same questions.',
       'When it says pass the phone, pass it, and don\u2019t watch your mate play.',
@@ -629,8 +617,8 @@
     vs.choiceAt = 0;
     vs.results = [null, null];
     vs.turn = 0;
-    /* Remote: each phone has one player, the challenger blue and the friend red. */
-    vs.first = vs.remote ? (vs.remote === 'host' ? 0 : 1) : vs.round % 2;
+    /* Remote: each phone has one player, the creator blue and the friend red. */
+    vs.first = vs.remote ? vs.me : vs.round % 2;
   }
 
   function vsPlayer() { return (state.vs.first + state.vs.turn) % 2; }
@@ -658,12 +646,12 @@
     $('handoff-kicker').textContent = (vs.games.length > 1 ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
     renderTally($('handoff-tally'));
     if (vs.remote) {
-      $('handoff-tally').hidden = vs.remote === 'host' || vs.games.length < 2;
+      $('handoff-tally').hidden = vs.remote !== 'chase' || vs.games.length < 2;
       $('handoff-pass').textContent = vs.round === 0 ? 'First up' : 'Next up';
       $('handoff-name').textContent = vs.names[p];
-      $('handoff-note').textContent = vs.remote === 'host'
-        ? vs.names[other] + ' will get exactly the same questions from your code.'
-        : (vs.dataNote || 'Same questions ' + vs.names[other] + ' had. Their score shows when you finish.');
+      $('handoff-note').textContent = vs.dataNote || (vs.remote === 'chase'
+        ? vs.names[other] + ' has played these. Their score shows after each round.'
+        : vs.names[other] + ' gets exactly the same questions on their phone.');
       $('handoff-go').textContent = 'Kick off';
       box.hidden = false;
       Sfx.haptic('medium');
@@ -801,8 +789,8 @@
 
     $('vs-next').textContent = vs.over ? 'Done' : 'Next round';
     $('vs-share').hidden = false;
-    $('vs-alt').textContent = vs.over ? (vs.remote === 'guest' ? 'Send result' : 'Rematch') : 'End match';
-    if (vs.remote === 'guest' && vs.over) codeBox(detail, vs.reply, 'Send this back to ' + vs.names[0] + ' so they see the result too.');
+    $('vs-alt').textContent = vs.over ? (vs.remote === 'chase' ? 'Send result' : 'Rematch') : 'End match';
+    if (vs.remote === 'chase' && vs.over) codeBox(detail, vs.resultCode, 'Send this to ' + vs.names[1 - vs.me] + ' so they see who won too.');
     box.hidden = false;
     box.querySelector('.sheet').scrollTop = 0;
     var winner = vs.over ? (multi ? champ : last.winner) : -1;
@@ -815,7 +803,8 @@
     var vs = state.vs;
     if (!vs) return;
     $('vs-result').hidden = true;
-    if (vs.stage === 'code') { endMatch(); return; }
+    if (vs.stage === 'invite') { vs.stage = null; showHandoff(); return; }
+    if (vs.stage === 'done') { endMatch(); return; }
     await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
     if (state.vs !== vs) return;
     if (vs.over) { endMatch(); return; }
@@ -827,13 +816,13 @@
   async function vsAlt() {
     var vs = state.vs;
     if (!vs) return;
-    if (vs.stage === 'code') { shareCode(vs.code, challengeText(vs)); return; }
-    if (vs.remote === 'guest' && vs.over) { shareCode(vs.reply, replyText(vs)); return; }
+    if (vs.stage === 'invite') { shareCode(matchText(vs)); return; }
+    if (vs.stage === 'done' || (vs.remote === 'chase' && vs.over)) { shareCode(resultText(vs)); return; }
     if (!vs.over) { endMatch(); return; }
     $('vs-result').hidden = true;
     await (window.Ads ? window.Ads.maybeShowInterstitial() : Promise.resolve(false));
     if (state.vs !== vs) return;
-    if (vs.remote) { closeVersus(); startRemoteHost(); }
+    if (vs.remote) { closeVersus(); createMatch(); }
     else startMatch();
   }
 
@@ -866,14 +855,16 @@
   }
 
   /* ───────── versus: play by code ─────────
-     No server: a challenge code carries the games, the shared seed and the
-     challenger's scores; the reply code adds the friend's. Both phones build
-     the same questions from the seed. Codes are untrusted input, so every
-     field is checked before use and only ever shown as text. */
+     No server. A match code carries the games, the shared seed and the
+     creator's name, so both phones build the same questions and can play at
+     the same time. Each player ends with a result code; pasting the other's
+     shows who won. Codes are untrusted input: every field is checked before
+     use and only ever shown as text. */
 
-  var REMOTE_KEY = 'footballaio.remote.v1';
-  var CODE_PREFIX = 'FAIO1.';
+  var REMOTE_KEY = 'footballaio.remote.v2';
+  var CODE_PREFIX = 'FAIO2.';
 
+  /* created: match codes this phone made. played: this phone's own results, by seed. */
   function remoteStore() {
     try {
       var s = JSON.parse(window.Store.read(REMOTE_KEY) || 'null');
@@ -897,7 +888,7 @@
   }
 
   function decodeCode(text) {
-    var m = /FAIO1\.([A-Za-z0-9_-]{8,6000})/.exec(String(text || '').replace(/\s+/g, ''));
+    var m = /FAIO2\.([A-Za-z0-9_-]{8,6000})/.exec(String(text || '').replace(/\s+/g, ''));
     if (!m) return null;
     try {
       var bin = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
@@ -910,7 +901,7 @@
   function cleanShown(v) { return String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 24); }
 
   function checkResults(list, max) {
-    if (!Array.isArray(list) || list.length > max) return null;
+    if (!Array.isArray(list) || !list.length || list.length > max) return null;
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var r = list[i];
@@ -922,17 +913,18 @@
     return out;
   }
 
+  /* t 'm': a match to play. t 's': one player's scores, p = 0 for the creator, 1 for the friend. */
   function checkCode(o) {
-    if (!o || o.v !== 1 || (o.t !== 'c' && o.t !== 'r')) return null;
+    if (!o || o.v !== 2 || (o.t !== 'm' && o.t !== 's')) return null;
     var ids = vsGames().map(function (g) { return g.id; });
     if (!Array.isArray(o.g) || !o.g.length || o.g.length > 5 || !o.g.every(function (id) { return ids.indexOf(id) >= 0; })) return null;
     if (typeof o.s !== 'string' || !/^[a-z0-9]{6,40}$/i.test(o.s)) return null;
-    if (!Array.isArray(o.n) || o.n.length !== (o.t === 'c' ? 1 : 2)) return null;
-    var names = o.n.map(function (n) { return cleanName(n) || 'Your mate'; });
-    var host = checkResults(o.r && o.r[0], o.g.length);
-    var guest = o.t === 'r' ? checkResults(o.r && o.r[1], o.g.length) : [];
-    if (!host || host.length !== o.g.length || !guest || (o.t === 'r' && !guest.length)) return null;
-    return { t: o.t, g: o.g.slice(), s: o.s, b: typeof o.b === 'string' ? o.b.slice(0, 30) : '', n: names, r: [host, guest] };
+    var code = { t: o.t, g: o.g.slice(), s: o.s, b: typeof o.b === 'string' ? o.b.slice(0, 30) : '', n: cleanName(o.n) || 'Your mate' };
+    if (o.t === 'm') return code;
+    if (o.p !== 0 && o.p !== 1) return null;
+    code.p = o.p;
+    code.r = checkResults(o.r, o.g.length);
+    return code.r ? code : null;
   }
 
   function packResult(game, r) {
@@ -951,18 +943,17 @@
     return UI.plural(games.length, 'round') + ' \u00b7 ' + (unique.length > 2 ? 'Mix it up' : names.join(', '));
   }
 
-  function challengeText(vs) {
-    return vs.names[0] + ' has challenged you on ' + APP_NAME + '! ' + remoteGamesText(vs.games) + '.\n' +
-      'Open Versus \u2192 Play by code and paste this message:\n' + vs.code;
+  function matchText(vs) {
+    return vs.names[vs.me] + ' wants a game of ' + APP_NAME + '! ' + remoteGamesText(vs.games) + '.\n' +
+      'Open Versus \u2192 Play by code and paste this message. We can play at the same time:\n' + vs.code;
   }
 
-  function replyText(vs) {
-    var line = vs.wins[0] === vs.wins[1] ? 'It\u2019s a draw' : vs.names[vs.wins[1] > vs.wins[0] ? 1 : 0] + ' wins';
-    return vs.names[1] + ' played your ' + APP_NAME + ' challenge. ' + line + ' ' + Math.max(vs.wins[0], vs.wins[1]) + '\u2013' + Math.min(vs.wins[0], vs.wins[1]) + '.\n' +
-      'Open Versus \u2192 Play by code and paste this message to see it:\n' + vs.reply;
+  function resultText(vs) {
+    return vs.names[vs.me] + '\u2019s ' + APP_NAME + ' result is in.\n' +
+      'Open Versus \u2192 Play by code and paste this message to see who won:\n' + vs.resultCode;
   }
 
-  function shareCode(code, text) {
+  function shareCode(text) {
     UI.share(text).then(function (how) { track('share', { game: 'versus_code', how: how }); });
   }
 
@@ -980,74 +971,125 @@
     });
   }
 
-  function remoteVs(role, games, base, names) {
-    return { remote: role, names: names, games: games, base: base, round: 0, wins: [0, 0], log: [], hostRes: [], guestRes: [], over: false };
+  function pasteBox(parent, label) {
+    var box = UI.el('div', 'vs-code-in', parent);
+    UI.el('span', 'kicker vs-label', box, label);
+    var field = UI.el('textarea', 'vs-code-in__field', box);
+    field.rows = 3;
+    field.spellcheck = false;
+    field.autocomplete = 'off';
+    field.setAttribute('autocapitalize', 'off');
+    field.placeholder = 'Paste the code or the whole message here';
+    field.setAttribute('aria-label', label);
+    var go = UI.el('button', 'btn btn--gold btn--wide', box, 'Go');
+    go.type = 'button';
+    go.addEventListener('click', function () { openCode(field.value); });
+    return { field: field, go: go };
   }
 
-  function startRemoteHost() {
+  function remoteVs(role, me, games, base, names, built) {
+    return { remote: role, me: me, names: names, games: games, base: base, built: built || '',
+      round: 0, wins: [0, 0], log: [], mine: [], theirs: null, over: false };
+  }
+
+  function otherName(mine, theirs) { return mine.toLowerCase() === theirs.toLowerCase() ? mine + ' 2' : mine; }
+
+  function noteData(vs, built, who) {
+    if (built && window.Footy.built && built !== window.Footy.built) {
+      vs.dataNote = 'Heads up: your football data is a different version from ' + who + '\u2019s, so a question or two may differ.';
+    }
+  }
+
+  function beginRemote(vs, how) {
+    state.vs = vs;
+    newVsRound();
+    Sfx.unlock();
+    Sfx.play('whistle');
+    track('versus_start', { game: vs.games.length > 1 ? 'mix' : vs.games[0], rounds: vs.games.length, remote: how });
+  }
+
+  function createMatch() {
     var me = vsSetup.me || 'Player 1';
     var games = vsSetup.game === 'mix'
       ? Daily.shuffle(vsGames().map(function (g) { return g.id; }), Math.random).slice(0, vsSetup.rounds)
       : new Array(vsSetup.rounds).fill(vsSetup.game);
     var base = (Math.random().toString(36).slice(2, 10) + Date.now().toString(36)).slice(0, 16);
-    state.vs = remoteVs('host', games, base, [me, 'Your mate']);
-    newVsRound();
-    Sfx.unlock();
-    Sfx.play('whistle');
-    track('versus_start', { game: vsSetup.game, rounds: vsSetup.rounds, remote: 'host' });
-    showHandoff();
+    var vs = remoteVs('live', 0, games, base, [me, 'Your mate'], window.Footy.built || '');
+    vs.code = encodeCode({ v: 2, t: 'm', g: games, s: base, b: vs.built, n: me });
+    var store = remoteStore();
+    store.created.push(base);
+    saveRemote(store);
+    beginRemote(vs, 'create');
+    showMatchCode(vs);
   }
 
-  function startRemoteGuest(code) {
-    var me = vsSetup.me || 'Player 2';
-    var names = [code.n[0], me.toLowerCase() === code.n[0].toLowerCase() ? me + ' 2' : me];
-    var vs = remoteVs('guest', code.g, code.s, names);
-    vs.hostRes = code.r[0];
-    vs.built = code.b;
-    if (code.b && window.Footy.built && code.b !== window.Footy.built) {
-      vs.dataNote = 'Heads up: your football data is a different version from ' + names[0] + '\u2019s, so a question or two may differ.';
-    }
-    state.vs = vs;
-    newVsRound();
-    Sfx.unlock();
-    Sfx.play('whistle');
-    track('versus_start', { game: code.g.length > 1 ? 'mix' : code.g[0], rounds: code.g.length, remote: 'guest' });
-    showHandoff();
+  function showMatchCode(vs) {
+    vs.stage = 'invite';
+    var box = $('vs-result');
+    box.style.setProperty('--g', MIX.color);
+    $('vs-kicker').textContent = 'Match code \u00b7 ' + remoteGamesText(vs.games);
+    $('vs-headline').textContent = 'Send this to your mate';
+    UI.clear($('vs-board'));
+    $('vs-sub').textContent = 'Then you both play, at the same time if you like. Same questions on both phones.';
+    var detail = $('vs-detail');
+    UI.clear(detail);
+    codeBox(detail, vs.code, 'They paste it in Versus \u2192 Play by code.');
+    $('vs-next').textContent = 'Kick off';
+    $('vs-alt').textContent = 'Send code';
+    $('vs-share').hidden = true;
+    box.hidden = false;
+    box.querySelector('.sheet').scrollTop = 0;
+    try { $('vs-alt').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
   }
 
   function openCode(text) {
     var code = decodeCode(text);
     if (!code) { UI.toast('That code doesn\u2019t look right \u2014 paste the whole thing'); return; }
     var store = remoteStore();
-    if (code.t === 'r') { showReply(code); return; }
-    if (store.created.indexOf(code.s) >= 0) { UI.toast('That\u2019s your own challenge \u2014 send it to a mate'); return; }
-    var played = store.played[code.s] && decodeCode(store.played[code.s]);
-    if (played) { UI.toast('You\u2019ve already played this one'); showReply(played, true); return; }
+    var mine = store.played[code.s];
+    var me = vsSetup.me;
+    if (code.t === 'm') {
+      if (mine) { UI.toast('You\u2019ve already played this one'); showOwnScores(fromStored(mine, code.s)); return; }
+      closeVersus();
+      applyPendingData();
+      var vs;
+      if (store.created.indexOf(code.s) >= 0) {
+        vs = remoteVs('live', 0, code.g, code.s, [code.n, 'Your mate'], code.b);
+      } else {
+        vs = remoteVs('live', 1, code.g, code.s, [code.n, otherName(me || 'Player 2', code.n)], code.b);
+        noteData(vs, code.b, code.n);
+      }
+      vs.code = encodeCode({ v: 2, t: 'm', g: code.g, s: code.s, b: code.b, n: code.n });
+      beginRemote(vs, vs.me ? 'join' : 'rejoin');
+      showHandoff();
+      return;
+    }
+    if (mine && mine.p === code.p) { UI.toast('That\u2019s your own result \u2014 send it to your mate'); return; }
+    if (mine) { showFinal(mine, code); return; }
+    /* They finished first: play the same rounds, with their scores shown round by round. */
+    closeVersus();
     applyPendingData();
-    startRemoteGuest(code);
+    var at = 1 - code.p;
+    var names = [];
+    names[code.p] = code.n;
+    names[at] = otherName(me || 'Player ' + (at + 1), code.n);
+    var chase = remoteVs('chase', at, code.g.slice(0, code.r.length), code.s, names, code.b);
+    chase.theirs = code.r;
+    noteData(chase, code.b, code.n);
+    beginRemote(chase, 'chase');
+    showHandoff();
   }
 
-  /* Host side between rounds, and the code at the end. */
   function finishRemoteTurn(vs, game, result) {
-    var p = vsPlayer();
-    if (vs.remote === 'host') {
-      vs.hostRes.push(packResult(game, result));
-      vs.log.push({ game: game, results: [result, null], winner: -1 });
-      if (window.Ads) window.Ads.noteLevelComplete();
-    }
+    vs.mine.push(packResult(game, result));
+    if (vs.remote === 'live' && window.Ads) window.Ads.noteLevelComplete();
     setTimeout(async function () {
       if (state.vs !== vs) return;
       leaveRound();
-      if (vs.remote === 'guest') {
-        vs.results = [unpackResult(vs.hostRes[vs.round]), vs.results[p]];
-        vs.guestRes.push(packResult(game, vs.results[1]));
+      if (vs.remote === 'chase') {
+        vs.results[1 - vs.me] = unpackResult(vs.theirs[vs.round]);
         settleVsRound(game);
-        if (vs.over) {
-          vs.reply = encodeCode({ v: 1, t: 'r', g: vs.games, s: vs.base, b: vs.built || '', n: vs.names, r: [vs.hostRes, vs.guestRes] });
-          var store = remoteStore();
-          store.played[vs.base] = vs.reply;
-          saveRemote(store);
-        }
+        if (vs.over) saveOwnResult(vs);
         showVsResult();
         return;
       }
@@ -1060,61 +1102,86 @@
         if (state.vs === vs) showHandoff();
         return;
       }
-      vs.code = encodeCode({ v: 1, t: 'c', g: vs.games, s: vs.base, b: window.Footy.built || '', n: [vs.names[0]], r: [vs.hostRes] });
-      var mine = remoteStore();
-      mine.created.push(vs.base);
-      saveRemote(mine);
-      track('versus_code', { rounds: vs.games.length });
-      showChallengeCode(vs);
+      saveOwnResult(vs);
+      showOwnScores(vs);
     }, UI.reduced ? 300 : 1100);
   }
 
-  function showChallengeCode(vs) {
-    vs.stage = 'code';
+  function saveOwnResult(vs) {
+    var store = remoteStore();
+    store.played[vs.base] = { p: vs.me, n: vs.names[vs.me], opp: vs.names[1 - vs.me], g: vs.games, b: vs.built, r: vs.mine };
+    saveRemote(store);
+    vs.resultCode = encodeCode({ v: 2, t: 's', g: vs.games, s: vs.base, b: vs.built, n: vs.names[vs.me], p: vs.me, r: vs.mine });
+    track('versus_code', { rounds: vs.mine.length });
+  }
+
+  function fromStored(mine, base) {
+    var names = [];
+    names[mine.p] = mine.n;
+    names[1 - mine.p] = mine.opp || 'Your mate';
+    var vs = remoteVs('live', mine.p, mine.g, base, names, mine.b);
+    vs.mine = mine.r;
+    vs.resultCode = encodeCode({ v: 2, t: 's', g: mine.g, s: base, b: mine.b, n: mine.n, p: mine.p, r: mine.r });
+    state.vs = vs;
+    return vs;
+  }
+
+  /* This player is done; the other may still be playing. */
+  function showOwnScores(vs) {
+    vs.stage = 'done';
+    var opp = vs.names[1 - vs.me];
+    var oppInline = opp === 'Your mate' ? 'your mate' : opp;
     var box = $('vs-result');
     box.style.setProperty('--g', MIX.color);
-    $('vs-kicker').textContent = 'Challenge ready \u00b7 ' + remoteGamesText(vs.games);
-    $('vs-headline').textContent = 'Now send it to your mate';
+    $('vs-kicker').textContent = 'Your result \u00b7 ' + remoteGamesText(vs.games);
+    $('vs-headline').textContent = 'Now swap result codes';
     UI.clear($('vs-board'));
-    $('vs-sub').textContent = 'Your scores stay hidden from them until they\u2019ve played.';
+    $('vs-sub').textContent = 'Send yours to ' + oppInline + ', and paste theirs below when it arrives.';
     var detail = $('vs-detail');
     UI.clear(detail);
     var log = UI.el('ol', 'vs-log', detail);
-    vs.log.forEach(function (e) {
+    vs.mine.forEach(function (p, i) {
+      var game = Games.byId[vs.games[i]];
       var li = UI.el('li', null, log);
-      li.style.setProperty('--g', e.game.color);
-      UI.el('span', 'vs-log__game', li, e.game.name);
-      var s = UI.el('span', 'vs-log__score is-win', li, vsShown(e.results[0]));
-      s.style.setProperty('--p', VS_COLORS[0]);
+      li.style.setProperty('--g', game.color);
+      UI.el('span', 'vs-log__game', li, game.name);
+      var s = UI.el('span', 'vs-log__score is-win', li, p[1]);
+      s.style.setProperty('--p', VS_COLORS[vs.me]);
     });
-    codeBox(detail, vs.code, 'They paste this in Versus \u2192 Play by code. Their reply code shows you who won.');
+    codeBox(detail, vs.resultCode, 'Your result code. ' + opp + ' pastes it in Versus \u2192 Play by code.');
+    pasteBox(detail, opp + '\u2019s result code');
     $('vs-next').textContent = 'Done';
-    $('vs-alt').textContent = 'Send code';
+    $('vs-alt').textContent = 'Send result';
     $('vs-share').hidden = true;
     box.hidden = false;
     box.querySelector('.sheet').scrollTop = 0;
     Sfx.play('whistle');
-    try { $('vs-alt').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
   }
 
-  /* The whole match from a reply code (or a challenge this phone already answered). */
-  function showReply(code, asGuest) {
-    var games = code.g.map(function (id) { return Games.byId[id]; });
-    var vs = remoteVs(asGuest ? 'guest' : 'final', code.g, code.s, code.n);
-    var played = code.r[1].length;
-    for (var i = 0; i < played; i++) {
-      var results = [unpackResult(code.r[0][i]), unpackResult(code.r[1][i])];
-      var a = vsValue(games[i], results[0]), b = vsValue(games[i], results[1]);
+  /* Both results in: the whole match, round by round. */
+  function showFinal(mine, code) {
+    var me = mine.p, them = code.p;
+    var names = [];
+    names[me] = mine.n;
+    names[them] = otherName(code.n, mine.n);
+    var n = Math.min(mine.r.length, code.r.length);
+    var vs = remoteVs('final', me, mine.g, code.s, names, mine.b);
+    for (var i = 0; i < n; i++) {
+      var game = Games.byId[mine.g[i]];
+      var results = [];
+      results[me] = unpackResult(mine.r[i]);
+      results[them] = unpackResult(code.r[i]);
+      var a = vsValue(game, results[0]), b = vsValue(game, results[1]);
       var winner = a > b ? 0 : b > a ? 1 : -1;
       if (winner >= 0) vs.wins[winner] += 1;
-      vs.log.push({ game: games[i], results: results, winner: winner });
+      vs.log.push({ game: game, results: results, winner: winner });
     }
-    vs.round = played - 1;
-    vs.left = code.g.length - played;
+    vs.round = n - 1;
+    vs.left = mine.g.length - n;
     vs.over = true;
-    if (asGuest) vs.reply = encodeCode({ v: 1, t: 'r', g: code.g, s: code.s, b: code.b, n: code.n, r: code.r });
+    closeVersus();
     state.vs = vs;
-    track('versus_reply', { rounds: played });
+    track('versus_final', { rounds: n });
     showVsResult();
   }
 
