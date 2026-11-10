@@ -142,9 +142,6 @@
 
   /* ───────── home ───────── */
 
-  var BALL = '<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="none" stroke="#18241c" stroke-width="1.6"/>' +
-    '<path d="M20 12.5l6.2 4.5-2.4 7.3h-7.6l-2.4-7.3z" fill="#18241c"/><path d="M20 12.5V4.6M26.2 17l7.4-2.6M23.8 24.3l4.6 6.4M16.2 24.3l-4.6 6.4M13.8 17l-7.4-2.6" stroke="#18241c" stroke-width="1.6" fill="none"/></svg>';
-
   function renderHome() {
     var now = today();
     $('home-date').textContent = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -1286,7 +1283,6 @@
     maybeAskConsent();
     trackViewport();
     warnIfNotSaved();
-    UI.svg(BALL, null, $('brand-ball'));
     history.replaceState({ s: 'home' }, '');
     window.addEventListener('popstate', onPopState);
     document.addEventListener('keydown', onKey);
