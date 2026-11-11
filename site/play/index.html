@@ -8,7 +8,7 @@
 <title>Football All-in-One · Versus</title>
 <meta property="og:title" content="Football All-in-One · Versus">
 <meta property="og:description" content="You've been challenged. Tap to play the same questions.">
-<link rel="icon" href="../app-icon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/app-icon.svg" type="image/svg+xml">
 <style>
   :root { color-scheme: dark; --lime: #c8f03c; --ink: #f2f7f3; --soft: #a9bdb0; }
   * { box-sizing: border-box; }
@@ -31,7 +31,7 @@
 </head>
 <body>
 <main>
-  <img src="../app-icon.svg" alt="">
+  <img src="../assets/app-icon.svg" alt="">
   <h1>Versus</h1>
   <p id="lead">Opening Football All-in-One&hellip;</p>
   <a id="open" class="btn" href="#">Open in the app</a>
@@ -41,6 +41,7 @@
     <p><button id="copy" class="btn ghost" type="button">Copy code</button></p>
     <p><a id="play-store" href="https://play.google.com/store/apps/details?id=com.politecarrot.footballallinone">Get it on Google Play</a>
       <br><small>On iPhone, search &ldquo;Football All-in-One&rdquo; in the App Store.</small></p>
+    <p><a id="web" class="btn ghost" href="../">Or play in your browser</a></p>
   </div>
   <p id="bad" hidden>This link looks incomplete. Ask your mate to send it again.</p>
 </main>
@@ -64,6 +65,7 @@
   var open = document.getElementById('open');
   open.href = target;
   document.getElementById('code').textContent = code;
+  document.getElementById('web').href = '../#' + code;
   document.getElementById('copy').addEventListener('click', function () {
     navigator.clipboard.writeText(code).then(function () {
       document.getElementById('copy').textContent = 'Copied';
