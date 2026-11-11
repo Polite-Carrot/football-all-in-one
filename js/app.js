@@ -963,7 +963,7 @@
       'Tap to play: ' + linkFor(vs.code);
   }
 
-  var PLAY_URL = 'https://polite-carrot.github.io/football-all-in-one/play/#';
+  var PLAY_URL = 'https://football-all-in-one.politecarrot.com/play/#';
   function linkFor(code) { return PLAY_URL + code; }
 
   function clampPoints(v) { return Math.max(0, Math.min(100, Math.round(v))); }

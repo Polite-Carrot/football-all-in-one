@@ -9,7 +9,7 @@
 (function (g) {
   'use strict';
 
-  var FEED = 'https://polite-carrot.github.io/football-all-in-one/feed/v1/';
+  var FEED = 'https://football-all-in-one.politecarrot.com/feed/v1/';
   var FORMAT = 1;
   var TIMEOUT_MS = 20000;
   var DB_NAME = 'footballaio-data';
