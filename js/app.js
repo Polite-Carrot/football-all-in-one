@@ -647,18 +647,22 @@
     $('handoff-kicker').textContent = (vs.games.length > 1 ? 'Round ' + (vs.round + 1) + ' of ' + vs.games.length + ' \u00b7 ' : '') + game.name;
     renderTally($('handoff-tally'));
     $('handoff-board').hidden = true;
+    $('handoff-you').hidden = true;
     if (vs.remote) {
       if (vs.round === 0) renderBoard($('handoff-board'), vs.base, {});
+      /* Arrived by link with no name yet: ask for it here, it goes on the leaderboard. */
+      var asking = !vsSetup.me && vs.round === 0;
+      $('handoff-you').hidden = !asking;
       $('handoff-tally').hidden = vs.remote !== 'chase' || vs.games.length < 2;
       $('handoff-pass').textContent = vs.round === 0 ? 'First up' : 'Next up';
-      $('handoff-name').textContent = vs.names[p];
+      $('handoff-name').textContent = asking ? 'Who\u2019s playing?' : vs.names[p];
       $('handoff-note').textContent = vs.dataNote || (vs.remote === 'chase'
         ? vs.names[other] + ' has played these. Their score shows after each round.'
         : vs.names[other] + ' gets exactly the same questions on their phone.');
       $('handoff-go').textContent = 'Kick off';
       box.hidden = false;
       Sfx.haptic('medium');
-      try { $('handoff-go').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
+      try { $(asking ? 'handoff-you-input' : 'handoff-go').focus({ preventScroll: true }); } catch (e) { /* older engines */ }
       return;
     }
     $('handoff-pass').textContent = vs.turn === 0 && vs.round === 0 ? 'First up' : 'Pass the phone to';
@@ -675,6 +679,13 @@
   function startVsTurn() {
     var vs = state.vs;
     if (!vs) return;
+    if (!$('handoff-you').hidden) {
+      var name = cleanName($('handoff-you-input').value);
+      if (!name) { UI.toast('Add your name \u2014 it goes on the leaderboard'); $('handoff-you-input').focus(); return; }
+      vsSetup.me = name;
+      window.Store.write(VS_KEY, JSON.stringify(vsSetup));
+      vs.names[vs.me] = otherName(name, vs.names[1 - vs.me]);
+    }
     $('handoff').hidden = true;
     vs.choiceAt = 0;
     if (vs.remote) vs.pick = Daily.rng(vs.seed + ':pick');
@@ -801,7 +812,7 @@
     $('vs-share').hidden = false;
     $('vs-alt').textContent = vs.over ? (vs.remote === 'chase' ? 'Send result' : 'Rematch') : 'End match';
     if (vs.remote === 'chase' && vs.over) codeBox(detail, vs.resultCode, 'Send this to ' + vs.names[1 - vs.me] + ' so they see who won too.');
-    if (vs.remote && vs.over) renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted });
+    if (vs.remote && vs.over) renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted, games: vs.games, mine: myPoints(vs) });
     box.hidden = false;
     box.querySelector('.sheet').scrollTop = 0;
     var winner = vs.over ? (multi ? champ : last.winner) : -1;
@@ -963,7 +974,7 @@
       'Tap to play: ' + linkFor(vs.code);
   }
 
-  var PLAY_URL = 'https://football-all-in-one.politecarrot.com/play/#';
+  var PLAY_URL = 'https://football-all-in-one.politecarrot.com/#';
   function linkFor(code) { return PLAY_URL + code; }
 
   function clampPoints(v) { return Math.max(0, Math.min(100, Math.round(v))); }
@@ -1104,7 +1115,6 @@
     var me = vsSetup.me;
     if (code.t === 'm') {
       if (mine) { UI.toast('You\u2019ve already played this one'); showOwnScores(fromStored(mine, code.s)); return; }
-      if (needName()) return;
       closeVersus();
       applyPendingData();
       var vs;
@@ -1121,7 +1131,6 @@
     }
     if (mine && mine.p === code.p) { UI.toast('That\u2019s your own result \u2014 send it to your mate'); return; }
     if (mine) { showFinal(mine, code); return; }
-    if (needName()) return;
     /* They finished first: play the same rounds, with their scores shown round by round. */
     closeVersus();
     applyPendingData();
@@ -1197,61 +1206,107 @@
     return true;
   }
 
-  /* The match's public board: the score to beat before kick-off, and where you rank after. */
+  /* The match's public board: the score to beat before kick-off, and where you
+     rank after. After a match it refreshes itself, so whoever finishes first
+     sees the others arrive, and a tap on any player compares rounds. */
   function renderBoard(parent, seed, opts) {
     var LB = window.Leaderboard;
     var el = parent.id === 'handoff-board' ? parent : UI.el('div', 'lb', parent);
     UI.clear(el);
     el.hidden = !LB;
     if (!LB) return;
+    var me = LB.playerId();
     var head = UI.el('div', 'lb__head', el);
     UI.el('span', 'kicker', head, 'Leaderboard');
     var meta = UI.el('span', 'lb__meta', head, 'Loading\u2026');
+    var beat = UI.el('p', 'lb__beat', el);
+    beat.hidden = true;
     var list = UI.el('ol', 'lb__list', el);
-    var me = LB.playerId();
-    Promise.resolve(opts.posted)
-      .then(function () { return LB.load(seed, opts.after ? 100 : 5, opts.after ? opts.total : undefined); })
-      .then(function (b) {
-        if (!el.isConnected) return;
-        if (!b.players) {
-          meta.textContent = 'No scores yet';
-          UI.el('li', 'lb__empty', list, opts.after ? 'Your score is on its way to the board.' : 'Nobody has played this yet. Set the score to beat.');
-          return;
-        }
-        var rankOf = function (e) { return 1 + b.top.filter(function (x) { return x.total > e.total; }).length; };
-        var row = function (e, rank) {
-          var li = UI.el('li', 'lb__row' + (e.id === me ? ' is-me' : ''), list);
-          UI.el('span', 'lb__rank', li, '#' + rank);
-          UI.el('span', 'lb__name', li, e.id === me ? e.name + ' (you)' : e.name);
-          UI.el('b', 'lb__total', li, String(e.total));
-          return li;
-        };
-        if (!opts.after) {
-          meta.textContent = UI.plural(b.players, 'player');
-          UI.el('p', 'lb__beat', el, 'Score to beat: ' + b.top[0].total + ' by ' + b.top[0].name);
-          el.insertBefore(el.lastChild, list);
-          b.top.forEach(function (e) { row(e, rankOf(e)); });
-          return;
-        }
+    var tools = UI.el('div', 'lb__tools', el);
+    var more = UI.el('button', 'btn btn--ghost btn--small', tools, '');
+    more.type = 'button';
+    more.hidden = true;
+    var refresh = UI.el('button', 'btn btn--ghost btn--small', tools, 'Refresh');
+    refresh.type = 'button';
+    refresh.hidden = !opts.after;
+    var hint = UI.el('p', 'lb__hint', el, 'Tap a player to compare round by round. Updates every 20 seconds.');
+    hint.hidden = true;
+    var showAll = false, openId = null, latest = null, timer = null;
+
+    function load(quiet) {
+      if (!el.isConnected) { clearInterval(timer); return; }
+      if (quiet && el.closest('[hidden]')) return;
+      if (!quiet) meta.textContent = 'Loading\u2026';
+      Promise.resolve(opts.posted)
+        .then(function () { return LB.load(seed, opts.after ? 100 : 5, opts.after ? opts.total : undefined); })
+        .then(function (b) { latest = b; fill(); })
+        .catch(function () { if (el.isConnected) meta.textContent = 'Leaderboard offline'; });
+    }
+
+    function compare(li, e) {
+      var box = UI.el('li', 'lb__compare', null);
+      li.after(box);
+      (opts.games || []).forEach(function (id, i) {
+        if (e.scores[i] === undefined) return;
+        var r = UI.el('div', 'lb__cmp', box);
+        UI.el('span', null, r, 'R' + (i + 1) + ' ' + Games.byId[id].name);
+        UI.el('b', null, r, String(e.scores[i]));
+        if (opts.mine && opts.mine[i] !== undefined && e.id !== me) UI.el('em', null, r, 'you ' + opts.mine[i]);
+      });
+    }
+
+    function fill() {
+      if (!el.isConnected) return;
+      var b = latest;
+      UI.clear(list);
+      if (!b.players) {
+        meta.textContent = 'No scores yet';
+        UI.el('li', 'lb__empty', list, opts.after ? 'Your score is on its way. Refresh in a moment.' : 'Nobody has played this yet. Set the score to beat.');
+        return;
+      }
+      var rankOf = function (e) { return 1 + b.top.filter(function (x) { return x.total > e.total; }).length; };
+      if (!opts.after) {
+        meta.textContent = UI.plural(b.players, 'player');
+        beat.textContent = 'Score to beat: ' + b.top[0].total + ' by ' + b.top[0].name;
+        beat.hidden = false;
+      } else {
         meta.textContent = b.rank ? 'You\u2019re #' + b.rank + ' of ' + b.players : UI.plural(b.players, 'player');
-        var rows = b.top.map(function (e) { var li = row(e, rankOf(e)); li.hidden = true; return { e: e, li: li }; });
-        var shown = 10;
-        var show = function () {
-          rows.forEach(function (r, i) { r.li.hidden = i >= shown && r.e.id !== me; });
-          more.hidden = rows.length <= shown;
-        };
-        if (b.rank && !b.top.some(function (e) { return e.id === me; }) && typeof opts.total === 'number') {
-          var you = UI.el('li', 'lb__row is-me', list);
-          UI.el('span', 'lb__rank', you, '#' + b.rank);
-          UI.el('span', 'lb__name', you, 'You');
-          UI.el('b', 'lb__total', you, String(opts.total));
-        }
-        var more = UI.el('button', 'btn btn--ghost btn--small lb__more', el, 'Show top ' + rows.length);
-        more.type = 'button';
-        more.addEventListener('click', function () { shown = rows.length; show(); });
-        show();
-      })
-      .catch(function () { if (el.isConnected) meta.textContent = 'Leaderboard offline'; });
+        hint.hidden = !opts.games;
+      }
+      var limit = opts.after && !showAll ? 10 : b.top.length;
+      b.top.forEach(function (e, i) {
+        if (i >= limit && e.id !== me) return;
+        var li = UI.el('li', 'lb__row' + (e.id === me ? ' is-me' : ''), list);
+        UI.el('span', 'lb__rank', li, '#' + rankOf(e));
+        UI.el('span', 'lb__name', li, e.id === me ? e.name + ' (you)' : e.name);
+        UI.el('b', 'lb__total', li, String(e.total));
+        if (!opts.after || !opts.games) return;
+        li.tabIndex = 0;
+        li.setAttribute('role', 'button');
+        li.setAttribute('aria-expanded', openId === e.id ? 'true' : 'false');
+        var toggle = function () { openId = openId === e.id ? null : e.id; fill(); };
+        li.addEventListener('click', toggle);
+        li.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } });
+        if (openId === e.id) compare(li, e);
+      });
+      if (opts.after && b.rank && typeof opts.total === 'number' && !b.top.some(function (e) { return e.id === me; })) {
+        var you = UI.el('li', 'lb__row is-me', list);
+        UI.el('span', 'lb__rank', you, '#' + b.rank);
+        UI.el('span', 'lb__name', you, 'You');
+        UI.el('b', 'lb__total', you, String(opts.total));
+      }
+      more.hidden = !opts.after || showAll || b.top.length <= 10;
+      more.textContent = 'Show top ' + b.top.length;
+    }
+
+    more.addEventListener('click', function () { showAll = true; fill(); });
+    refresh.addEventListener('click', function () { Sfx.play('tap'); load(); });
+    load();
+    if (opts.after) timer = setInterval(function () { load(true); }, 20000);
+  }
+
+  function myPoints(vs) {
+    return vs.mine.map(function (p, i) { return roundPoints(Games.byId[vs.games[i]], unpackResult(p)); });
   }
 
   function fromStored(mine, base) {
@@ -1293,7 +1348,7 @@
     UI.el('span', 'vs-log__score is-win', total, packedTotal(vs.games, vs.mine) + '/' + vs.mine.length * 100);
     codeBox(detail, vs.resultCode, 'Your result link. ' + opp + ' taps it to see who won, or to play if they haven\u2019t yet.');
     pasteBox(detail, opp + '\u2019s result link or code');
-    renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted });
+    renderBoard(detail, vs.base, { after: true, total: myTotal(vs), posted: vs.posted, games: vs.games, mine: myPoints(vs) });
     $('vs-next').textContent = 'Done';
     $('vs-alt').textContent = 'Send result';
     $('vs-share').hidden = true;
@@ -1942,12 +1997,7 @@
         state.lobby = 'versus';
         renderLobby();
         go('lobby');
-        if (vsSetup.me) { openCode(url); return; }
-        var field = $('vs-code-field');
-        if (field) field.value = url;
-        var name = document.querySelector('.vs-player__input');
-        if (name) name.focus();
-        UI.toast('Add your name, then tap Play it');
+        openCode(url);
       }, away ? 350 : 0);
     })(0);
   }

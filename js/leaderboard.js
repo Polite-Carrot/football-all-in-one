@@ -80,11 +80,13 @@
     if (!r.ok || !Array.isArray(r.json)) throw new Error('leaderboard ' + r.status);
     return r.json.filter(function (x) { return x.document; }).map(function (x) {
       var f = x.document.fields || {};
+      var scores = (f.scores && f.scores.arrayValue && f.scores.arrayValue.values) || [];
       return {
         id: x.document.name.split('/').pop(),
         name: (f.name && f.name.stringValue) || 'Player',
         total: Number(f.total && f.total.integerValue) || 0,
-        rounds: Number(f.rounds && f.rounds.integerValue) || 0
+        rounds: Number(f.rounds && f.rounds.integerValue) || 0,
+        scores: scores.map(function (v) { return Number(v.integerValue) || 0; })
       };
     });
   }

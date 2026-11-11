@@ -10,15 +10,133 @@
   var RUNG = ['Easy', 'Hard', 'Expert'];
   var EMOJI = ['\u274C', '1\uFE0F\u20E3', '2\uFE0F\u20E3', '3\uFE0F\u20E3'];
 
-  /* Five different ladders a day; the whole set is used before any repeats. */
-  function chooseLadders(ctx) {
+  /* Each round mixes CURATED hand-written ladders with ladders built from the
+     player database, which has thousands of combinations, so questions rarely
+     come round again. */
+  var CURATED = 2;
+  var SEEN_KEY = 'footballaio.by.seen.v1';
+
+  function seenTopics() {
+    try { var s = JSON.parse(g.Store.read(SEEN_KEY) || '[]'); return Array.isArray(s) ? s : []; } catch (e) { return []; }
+  }
+
+  function chooseCurated(ctx) {
     var all = g.FA_LADDERS.map(function (l, i) { return i; });
-    if (ctx.mode !== 'daily') return Daily.shuffle(all, ctx.rand).slice(0, LADDERS);
-    var perCycle = Math.floor(all.length / LADDERS);
-    var n = Daily.number(ctx.date) - 1;
-    var order = Daily.shuffle(all, Daily.rng('backyourself:' + Math.floor(n / perCycle)));
-    var k = ((n % perCycle) + perCycle) % perCycle;
-    return order.slice(k * LADDERS, k * LADDERS + LADDERS);
+    if (ctx.mode === 'daily') {
+      var perCycle = Math.floor(all.length / CURATED);
+      var n = Daily.number(ctx.date) - 1;
+      var order = Daily.shuffle(all, Daily.rng('backyourself:' + Math.floor(n / perCycle)));
+      var k = ((n % perCycle) + perCycle) % perCycle;
+      return order.slice(k * CURATED, k * CURATED + CURATED);
+    }
+    var shuffled = Daily.shuffle(all, ctx.rand);
+    /* Practice skips topics seen lately; versus must pick the same on both phones, so it cannot. */
+    if (ctx.mode === 'practice') {
+      var seen = seenTopics();
+      var fresh = shuffled.filter(function (i) { return seen.indexOf(g.FA_LADDERS[i].topic) < 0; });
+      if (fresh.length >= CURATED) shuffled = fresh;
+    }
+    return shuffled.slice(0, CURATED);
+  }
+
+  function rememberTopics(ladders) {
+    var seen = seenTopics().concat(ladders.map(function (l) { return l.topic; }));
+    g.Store.write(SEEN_KEY, JSON.stringify(seen.slice(-Math.floor(g.FA_LADDERS.length * 0.7))));
+  }
+
+  /* ───────── generated ladders ─────────
+     Directory order is famous-first, so a player's index is his fame rank:
+     easy rungs use household names, expert rungs the deep cuts. Wrong options
+     are players of similar fame (and position, where possible), so the right
+     answer never stands out for being the only name you know. */
+
+  function pickFrom(list, rand) { return list[Math.floor(rand() * list.length)]; }
+
+  function decoys(F, near, ok, n, rand) {
+    var pos = F.position(near);
+    var lo = Math.max(0, near - 500), hi = Math.min(F.count(), near + 500);
+    var same = [], any = [];
+    for (var i = lo; i < hi; i++) {
+      if (i === near || !ok(i) || !F.fame(i)) continue;
+      (F.position(i) === pos ? same : any).push(i);
+    }
+    var pool = same.length >= n ? same : same.concat(any);
+    return pool.length >= n ? Daily.shuffle(pool, rand).slice(0, n) : null;
+  }
+
+  function distinct(options) {
+    var seen = {};
+    return options.every(function (o) { var k = g.Footy.norm(o); if (seen[k]) return false; seen[k] = 1; return true; });
+  }
+
+  function playedFor(F, c, members, from, to, rand) {
+    var p = pickFrom(members.slice(Math.floor(members.length * from), Math.max(Math.floor(members.length * to), 1)), rand);
+    var wrong = decoys(F, p, function (x) { return !c._set.has(x); }, 3, rand);
+    if (!wrong) return null;
+    return ['Which of these played for ' + c.n + '?', F.name(p)].concat(wrong.map(F.name));
+  }
+
+  function whichClub(F, c, members, clubs, rand) {
+    var p = pickFrom(members.slice(Math.floor(members.length * 0.08), Math.floor(members.length * 0.3)), rand);
+    var others = Daily.shuffle(clubs.filter(function (t) { return t !== c && !t._set.has(p); }), rand).slice(0, 3);
+    if (others.length < 3) return null;
+    return ['Which of these clubs did ' + F.name(p) + ' play for?', c.n].concat(others.map(function (t) { return t.n; }));
+  }
+
+  function playedForBoth(F, c, members, clubs, rand) {
+    var partners = Daily.shuffle(clubs.filter(function (t) { return t !== c; }), rand);
+    for (var i = 0; i < partners.length; i++) {
+      var d = partners[i];
+      var both = members.filter(function (x) { return d._set.has(x); });
+      if (both.length < 4) continue;
+      var p = pickFrom(both.slice(0, Math.ceil(both.length / 2)), rand);
+      var wrong = decoys(F, p, function (x) { return c._set.has(x) && !d._set.has(x); }, 3, rand);
+      if (wrong) return ['Which of these played for both ' + c.n + ' and ' + d.n + '?', F.name(p)].concat(wrong.map(F.name));
+    }
+    return null;
+  }
+
+  /* Three members and one outsider of similar fame: the outsider is the answer. */
+  function didNotPlay(F, c, members, rand) {
+    var band = members.slice(0, Math.floor(members.length * 0.15));
+    var three = Daily.shuffle(band, rand).slice(0, 3);
+    var odd = decoys(F, three[0], function (x) { return !c._set.has(x); }, 1, rand);
+    if (three.length < 3 || !odd) return null;
+    return ['Which of these did NOT play for ' + c.n + '?', F.name(odd[0])].concat(three.map(F.name));
+  }
+
+  function clubLadder(F, c, clubs, rand) {
+    var members = c._list.filter(function (x) { return F.fame(x) > 0; }).sort(function (a, b) { return a - b; });
+    if (members.length < 60) return null;
+    var easy = playedFor(F, c, members, 0, 0.06, rand);
+    var roll = rand();
+    var hard = roll < 0.4 ? whichClub(F, c, members, clubs, rand)
+      : roll < 0.7 ? didNotPlay(F, c, members, rand)
+      : playedFor(F, c, members, 0.06, 0.25, rand);
+    var expert = rand() < 0.6 ? playedForBoth(F, c, members, clubs, rand) : playedFor(F, c, members, 0.25, 0.55, rand);
+    var q = [easy, hard, expert];
+    if (q.some(function (x) { return !x || !distinct(x.slice(1)); })) return null;
+    return { topic: c.n, q: q };
+  }
+
+  function generated(rand, count) {
+    var F = g.Footy;
+    var clubs = F.teamKeys().map(F.team).filter(function (t) { return t && !t.nt && t.big; });
+    var out = [], used = {};
+    for (var tries = 0; out.length < count && tries < 80; tries++) {
+      var c = pickFrom(clubs, rand);
+      if (used[c.k]) continue;
+      var l = clubLadder(F, c, clubs, rand);
+      if (l) { used[c.k] = 1; out.push(l); }
+    }
+    return out;
+  }
+
+  function chooseLadders(ctx) {
+    var curated = chooseCurated(ctx).map(function (i) { return g.FA_LADDERS[i]; });
+    var made = generated(ctx.rand, LADDERS - curated.length);
+    if (ctx.mode === 'practice') rememberTopics(curated);
+    return Daily.shuffle(curated.concat(made), ctx.rand);
   }
 
   Games.register({
@@ -35,9 +153,10 @@
       'Get any rung wrong and the whole ladder scores nothing.'
     ],
     better: 'high',
+    pickLadders: chooseLadders,
 
     start: function (ctx) {
-      var ladders = chooseLadders(ctx).map(function (i) { return g.FA_LADDERS[i]; });
+      var ladders = chooseLadders(ctx);
       var results = [];
       var li = -1, rung = 0;
       var over = false;

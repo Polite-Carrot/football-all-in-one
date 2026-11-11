@@ -1217,6 +1217,18 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .lb__empty { color: var(--ink-soft); font-size: 14px; padding: 4px 0; }
 .lb__more { justify-self: center; }
 .lb__more[hidden] { display: none; }
+.lb__tools { display: flex; justify-content: center; gap: 8px; }
+.lb__tools .btn[hidden] { display: none; }
+.lb__hint { margin: 0; color: var(--ink-faint); font-size: 12px; text-align: center; }
+.lb__hint[hidden], .lb__beat[hidden] { display: none; }
+.lb__row[role="button"] { cursor: pointer; }
+.lb__row[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--gold); }
+.lb__compare { display: grid; gap: 2px; padding: 6px 10px 8px 54px; }
+.lb__cmp { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline; font-size: 13px; color: var(--ink-soft); }
+.lb__cmp b { font: 800 15px/1 var(--display); color: var(--ink); }
+.lb__cmp em { font-style: normal; color: var(--lime); min-width: 52px; text-align: right; }
+.handoff__you { width: 100%; max-width: 420px; }
+.handoff__you[hidden] { display: none; }
 .handoff { overflow-y: auto; }
 .handoff__card { margin: auto 0; }
 .handoff .lb { max-width: 420px; }

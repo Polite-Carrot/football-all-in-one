@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["8FX69R495P.com.politecarrot.footballallinone"],
+        "components": [
+          { "/": "/", "#": "FAIO2*", "comment": "Versus match and result links open the app" },
+          { "/": "/play/*", "#": "FAIO2*", "comment": "Older /play/ links" }
+        ]
+      }
+    ]
+  }
+}
